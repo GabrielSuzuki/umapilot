@@ -68,38 +68,64 @@ consistent with a growth-rate term whose value we do not have; it is not a broke
 multiplier chain. The base values from `master.mdb` and the verified card effects
 reproduce the game's own number.
 
-## Where the gap actually is — now ranked
+## Where the gap actually is — calibrated against a real run
 
-Instrumenting a full career under the competent policy:
+### The formula is correct. Two independent confirmations.
 
-```
-trainings 64 | with a rainbow card: 12 (19%)
-final bonds   speed:63 stamina:100 guts:70 power:75 wit:100 friend:80
-facility lvls speed:3 stamina:2 power:2 guts:1 wit:5
-avg gain/training 17.0     (real run: ~90)
-```
+**Against a single observed training.** Screenshot 09 — Power facility Lvl 1,
+three cards, no rainbow — displayed `+6 Stamina, +15 Power`. The model with
+Kitasan Black + Maruzensky + Fine Motion predicts `stamina +5, power +15`. Power
+exact; one low on the smaller term, consistent with an unknown growth rate.
 
-**1. Facility levels never rise.** The run ends with Guts at level 1 and Power at
-2. A real career pushes most facilities to 4-5. Level-up thresholds are modelled
-as "one level per four uses", which was always flagged as invented.
+**In the ideal state.** Speed facility, level 5, four cards all at rainbow, great
+mood, all song bonuses:
 
-**2. Rainbow almost never fires.** 19% of trainings, and three of six cards
-finish below the bond 80 threshold. Card placement is modelled as a flat 2:1
-bias toward a card's own facility — also flagged as invented — and it directly
-controls how often rainbow can happen.
+| state | speed | power | total |
+|---|---:|---:|---:|
+| Lvl 1, 1 card, normal mood, no songs | +11 | +6 | 17 |
+| Lvl 5, 3 rainbow cards, normal mood | +34 | +19 | 53 |
+| Lvl 5, 3 rainbow, great mood | +45 | +26 | 71 |
+| Lvl 5, 3 rainbow + friend, great mood | +51 | +29 | 80 |
+| **Lvl 5, 3 rainbow + friend, great mood, all songs** | **+63** | **+40** | **103** |
 
-**3. Bond growth rate** is a guess (7 per training on-type, 5 off-type), and it
-gates (2).
+The real logged run averaged **~82–95 stat per training** across the career. The
+model brackets it. **The multiplier chain is not the problem.**
 
-Arithmetic check that these are sufficient: five cards stacked on a level-5
-facility, all rainbow, great mood gives
-`1.25^3 x 1.38 x 1.30 x 1.25 = 4.4`, and `12 x 4.4 = 53` on the primary stat plus
-secondaries — around 90 across stats, which is the real figure. The same formula
-produces it. What is missing is the *state* that formula is being evaluated in.
+### The gap is state occupancy, not arithmetic
 
-**So all three dominant causes are mechanics that were explicitly marked as
-guessed, and the parts derived from the database are correct.** That is the
-ranking `m1-status.md` refused to produce without data.
+The simulated player almost never reaches the state where those numbers happen:
+
+| | simulated | real run |
+|---|---|---|
+| trainings with a rainbow card | 38% | near-continuous on the focused facilities |
+| mood | rarely great | managed to great |
+| facility levels reached | Speed 4, Wit 5, rest 1 | Speed 5, Wit 5, rest 1 |
+| songs learned | few, late | 19 of 23 |
+| average gain per training | ~20 | ~82 |
+
+Same formula, different state. **That makes the residual a search problem, which
+is precisely what the recommender is for — not a modelling defect.**
+
+### Three real bugs found along the way
+
+1. **`initial_friendship` was extracted and never applied.** Cards started at
+   bond 0 instead of 20–35. Since rainbow needs 80, that was a third of the
+   distance thrown away on every card, compounding across the career. Fixing it
+   moved rainbow frequency from 13% to 38%.
+2. **The harness only ever bought techniques, never songs.** No simulated career
+   learned a single song, forfeiting both the per-training stat bonuses and the
+   Great Success bump that needs three songs before each concert.
+3. **Mood was never managed.** With these cards' `mood_effect` values, great
+   versus normal is worth ~38% on every training, and the policy left it at
+   normal.
+
+### A correction: real runs do NOT level most facilities
+
+The end-of-run capture shows **Speed 5, Wit 5, and Stamina, Power and Guts still
+at level 1** — untouched for 72 turns. The earlier claim here that a real career
+"reaches 4-5" across the board was wrong, and the inference built on it
+("facility levels never rise") was measuring the wrong thing. Facility level is a
+*consequence* of concentrating training, not an independent lever.
 
 ## Original candidate list, for the record
 

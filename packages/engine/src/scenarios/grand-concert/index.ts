@@ -29,8 +29,16 @@ import type { RunState, TurnAction, ShopAction, Scenario } from "../../scenario"
 export interface CardState {
   cardId: number;
   stat: Stat | null;
+  /**
+   * 0-100. Rainbow needs >= 80.
+   *
+   * Cards do NOT start at zero: `initial_friendship` (20-35 on the cards
+   * checked) is granted at career start. Missing that was worth a third of the
+   * distance to rainbow on every card, and rainbow is the largest multiplier in
+   * the game -- so the omission compounded over an entire career.
+   */
   bond: number;
-  effects: PlacedCard["effects"];
+  effects: PlacedCard["effects"] & { initial_friendship?: number };
 }
 
 export interface GrandConcertState {
@@ -130,7 +138,12 @@ export class GrandConcertScenario
         concertsHeld: 0,
         facilityLevels: { speed: 1, stamina: 1, power: 1, guts: 1, wit: 1, ...this.setup.facilityLevels },
         facilityUses: { speed: 0, stamina: 0, power: 0, guts: 0, wit: 0 },
-        cards: this.setup.cards.map((c) => ({ ...c })),
+        // Apply initial_friendship. A card with initial_friendship 35 starts at
+        // bond 35, not 0.
+        cards: this.setup.cards.map((c) => ({
+          ...c,
+          bond: Math.max(c.bond, c.effects.initial_friendship ?? 0),
+        })),
         placement: { speed: [], stamina: [], power: [], guts: [], wit: [] },
         growthRate: this.setup.growthRate ?? {},
         assumptions: [],

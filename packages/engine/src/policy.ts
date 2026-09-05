@@ -57,8 +57,10 @@ export const competentPolicy: Policy = (state, { scenario, target = {} }) => {
   const s = state.scenario;
   const energy = state.energy;
 
-  // Mood is a multiplier on every training; topping it up early is cheap.
-  if (state.mood <= -1 && energy > 40) return { kind: "outing" };
+  // Mood is a multiplier on every training; topping it up is usually worth more
+  // than the training the outing displaces.
+  if (state.mood < 2 && energy > 45 && state.turn % 7 === 0) return { kind: "outing" };
+  if (state.mood <= -1) return { kind: "outing" };
 
   const FAILURE_LIMIT = 0.15;
   const candidates = STATS.filter((f) => scenario.failureChanceFor(state, f) <= FAILURE_LIMIT);
@@ -140,7 +142,72 @@ export const naivePolicy: Policy = (state, { scenario, target = {} }) => {
   return { kind: "train", facility: pick };
 };
 
+/**
+ * Concentrate on a small set of facilities.
+ *
+ * Derived from a real logged career, which ended with Speed 5 / Wit 5 and
+ * Stamina, Power and Guts still at level 1 -- untouched for 72 turns. That was
+ * a surprise: the assumption had been that a good run levels most facilities to
+ * 4-5. It does not. It picks two and hammers them.
+ *
+ * The mechanism matters more than the observation. Concentrating is not about
+ * facility level directly; it is that repeatedly training the same facility is
+ * what drives the cards specialising in it to bond 80, which is what unlocks
+ * rainbow, which is the largest multiplier in the game. Facility level is a
+ * side effect of concentration, not an independent lever -- which is why
+ * "facility levels never rise" was the wrong diagnosis.
+ */
+export function focusedPolicy(focus: Stat[]): Policy {
+  return (state, ctx) => {
+    const { scenario, target = {} } = ctx;
+    const s = state.scenario;
+
+    // Mood is a multiplier on every training, and these cards carry large
+    // mood_effect values (30-40 each), so the gap between normal and great is
+    // worth roughly 38% on everything. Managing it beats one extra training.
+    if (state.mood < 2 && state.energy > 45 && state.turn % 7 === 0) {
+      return { kind: "outing" };
+    }
+    if (state.mood <= -1) return { kind: "outing" };
+
+    const FAILURE_LIMIT = 0.15;
+    const safe = (f: Stat) => scenario.failureChanceFor(state, f) <= FAILURE_LIMIT;
+
+    // Wit is the low-energy click: it refunds energy and its failure base is
+    // ~40% lower than anything else.
+    const witWanted = target.wit == null || state.stats.wit < target.wit;
+    if (state.energy < 35) {
+      if (safe("wit") && witWanted) return { kind: "train", facility: "wit" };
+      return { kind: "rest" };
+    }
+
+    const pool = focus.filter(safe);
+    if (pool.length === 0) return { kind: "rest" };
+
+    let best = pool[0]!;
+    let bestScore = -Infinity;
+    for (const facility of pool) {
+      const placed = s.placement[facility];
+      const rainbows = placed.filter((i) => {
+        const c = s.cards[i];
+        return c && c.stat === facility && c.bond >= 80;
+      }).length;
+      const onType = placed.filter((i) => s.cards[i]?.stat === facility).length;
+
+      const want = target[facility] ?? scenario.statCaps[facility];
+      const shortfall = Math.max(0, (want ?? 0) - state.stats[facility]) / Math.max(1, want ?? 1);
+
+      // Rainbow first; then cards that could still become rainbow; then need.
+      const score = rainbows * 12 + onType * 4 + placed.length * 0.5 + shortfall * 2;
+      if (score > bestScore) { bestScore = score; best = facility; }
+    }
+    return { kind: "train", facility: best };
+  };
+}
+
 export const POLICIES: Record<string, Policy> = {
   competent: competentPolicy,
   naive: naivePolicy,
+  // The two facilities the real logged run actually levelled.
+  focused: focusedPolicy(["speed", "wit"]),
 };

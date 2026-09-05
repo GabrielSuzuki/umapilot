@@ -51,10 +51,32 @@ function playOne(
 
   while (!scenario.isTerminal(state) && guard++ < 300) {
     state = scenario.step(state, policy(state, { scenario, target }), rng);
-    const shop = scenario.legalShopActions(state).filter((a) => a.kind === "technique");
-    if (shop.length) state = scenario.buy(state, shop[0]!);
+    state = shop(scenario, state);
   }
   return state;
+}
+
+/**
+ * Spend performance tokens.
+ *
+ * The first version of this only bought techniques, which meant no simulated
+ * career ever learned a song -- forfeiting both the permanent per-training stat
+ * bonuses and the Great Success stat bump that needs three songs before each
+ * concert. A real run learns most of them (the logged one: 19 of 23).
+ *
+ * Songs first, cheapest affordable; techniques with whatever is left.
+ */
+function shop(scenario: GrandConcertScenario, state: GcRunState): GcRunState {
+  let next = state;
+  for (let i = 0; i < 4; i++) {
+    const actions = scenario.legalShopActions(next);
+    const song = actions.find((a) => a.kind === "song");
+    const tech = actions.find((a) => a.kind === "technique");
+    const pick = song ?? tech;
+    if (!pick) break;
+    next = scenario.buy(next, pick);
+  }
+  return next;
 }
 
 function percentile(sorted: number[], p: number): number {
