@@ -15,6 +15,16 @@ import type { GrandConcertDataset, Stat } from "../../data/src/types";
 import { MOOD_VALUES, type FacilityTable, type Mood, type PlacedCard } from "../src/scenarios/grand-concert/training";
 import { parseLog, serializeLog, validateObservation, type Observation } from "../src/calibration/log";
 import { computeResiduals, diagnose, solveBaseValues } from "../src/calibration/fit";
+import { decodeEffectText, accumulatePerTrainingBonuses } from "../../data/src/effects";
+import { computeTraining } from "../src/scenarios/grand-concert/training";
+import { STATS, type StatVector } from "../../data/src/types";
+
+const NO_CAPS: StatVector = {
+  speed: Infinity, stamina: Infinity, power: Infinity, guts: Infinity, wit: Infinity,
+};
+const ZERO_STATS_LOCAL: StatVector = {
+  speed: 0, stamina: 0, power: 0, guts: 0, wit: 0,
+};
 
 const GEN = join(import.meta.dirname, "../../data/generated");
 const hasData = (() => {
@@ -244,6 +254,73 @@ function makeObservations(d: Distortion): Observation[] {
   const d = diagnose(computeResiduals(obs, facilityTable, effectsFor));
   check("a thin log is flagged as provisional",
     d.verdict.some((v) => v.includes("provisional")), d.verdict[0] ?? "");
+}
+
+// ---------------------------------------------------------------------------
+// Song effect decoding (from the game's own text, not the opcodes)
+// ---------------------------------------------------------------------------
+
+{
+  const perTraining = decodeEffectText("Training Speed Gain +2");
+  check("a per-training song bonus decodes",
+    perTraining.perTrainingStat.speed === 2 && perTraining.unparsed.length === 0);
+
+  const oneOff = decodeEffectText("Speed +22");
+  check("a one-off stat grant decodes, and is NOT per-training",
+    oneOff.oneOffStat.speed === 22 && oneOff.perTrainingStat.speed === undefined);
+
+  const sp = decodeEffectText("Training Skill Pt Gain +3");
+  check("a per-training skill point bonus decodes", sp.perTrainingSkillPoints === 3);
+
+  const multi = decodeEffectText("Guts +4\nSkill Pts +4");
+  check("a multi-clause effect decodes both clauses",
+    multi.oneOffStat.guts === 4 && multi.oneOffSkillPoints === 4);
+
+  const hint = decodeEffectText("Skill hint appropriate for aptitude");
+  check("a hint effect is recognised", hint.grantsHint);
+
+  const unknown = decodeEffectText("Something entirely new");
+  check("an unrecognised clause is reported, never silently dropped",
+    unknown.unparsed.length === 1);
+
+  // Every song and technique in the real dataset must decode.
+  const songTexts = dataset.songs.map((s) => s.mastery_bonus.text);
+  const acc = accumulatePerTrainingBonuses(songTexts);
+  check("every song effect in the dataset parses",
+    acc.unparsed.length === 0, acc.unparsed.slice(0, 2).join(" | "));
+  check("owning every song gives per-training bonuses on all five stats",
+    STATS.every((s) => (acc.stats[s] ?? 0) > 0),
+    JSON.stringify(acc.stats) + ` +${acc.skillPoints} SP`);
+
+  const techTexts = dataset.techniques.map((t) => t.effect.text);
+  const techUnparsed = techTexts
+    .map((t) => decodeEffectText(t).unparsed)
+    .flat()
+    .filter((u) => !u.startsWith("range approximated"));
+  check("every technique effect in the dataset parses",
+    techUnparsed.length === 0,
+    `${techUnparsed.length} unparsed: ${[...new Set(techUnparsed)].slice(0, 3).join(" | ")}`);
+}
+
+// ---------------------------------------------------------------------------
+// Song bonuses feed the training calculation
+// ---------------------------------------------------------------------------
+
+{
+  const withoutSongs = computeTraining({
+    facility: "speed", facilityLevel: 1, mood: "normal", growthRate: {},
+    cards: [], facilityTable, statCaps: NO_CAPS, currentStats: ZERO_STATS_LOCAL,
+  });
+  const withSongs = computeTraining({
+    facility: "speed", facilityLevel: 1, mood: "normal", growthRate: {},
+    cards: [], facilityTable, statCaps: NO_CAPS, currentStats: ZERO_STATS_LOCAL,
+    songBonuses: { speed: 3 },
+  });
+  check("song bonuses raise the gain",
+    withSongs.gains.speed === withoutSongs.gains.speed + 3,
+    `${withoutSongs.gains.speed} -> ${withSongs.gains.speed}`);
+  check("a projection with no song bonuses says so in its assumptions",
+    withoutSongs.assumptions.some((a) => a.includes("no song bonuses supplied")));
 }
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILED`);

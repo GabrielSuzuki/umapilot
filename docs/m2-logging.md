@@ -11,24 +11,31 @@ training and diff them. Don't. It is 72 tedious entries, it captures one
 observation per turn, and every observation is polluted by training failures,
 events and rounding.
 
-**The training screen already shows the game's own predicted gains for all five
-facilities at once.** Those predictions are the exact output of the formula we
-are trying to reproduce, with no RNG in them.
+**The training screen shows the game's own predicted gains for the facility
+you have selected.** That prediction is the exact output of the formula we are
+trying to reproduce, with no RNG in it.
 
-That changes the economics completely:
+> **Correction (2026-09-05).** An earlier version of this document claimed the
+> screen shows all five facilities at once and therefore yielded five
+> observations per screenshot. It does not — the `+N` badges apply only to the
+> highlighted facility. It is **one observation per capture**. The approach is
+> still clearly better than before/after diffing, but the arithmetic below was
+> wrong and the effort estimate with it.
 
 | | before/after diffing | training-screen capture |
 |---|---|---|
-| observations per turn | 1 | **5** |
-| needs a clean turn | yes | no |
+| observations per turn | 1 | 1 |
+| needs a clean turn | yes | **no** |
 | contaminated by failures/events | yes | **no** |
-| effort | note stats twice per turn | one screenshot |
+| RNG in the number | yes | **no** |
+| effort | note stats twice per turn | one keypress |
 
-Twenty screenshots gives ~100 clean observations across a range of facility
-levels, moods and card placements. That is enough to fit a six-term multiplicative
-model comfortably.
+The win is not volume, it is *cleanliness*: the displayed number is the formula's
+output directly, rather than an outcome with failure, events and rounding mixed
+in. A full career captured turn by turn gives 50-60 observations, which is
+comfortably enough.
 
-**So: screenshot the training screen. That's the whole ask.**
+**So: screenshot the training screen every turn.** One `Win + PrintScreen`.
 
 ## What one observation is
 
@@ -54,6 +61,13 @@ A single (facility, this turn) row:
 
 Everything here is visible on that one screen except `cardId` and `growthRate`,
 which come from the pre-run scan and stay constant for the whole career.
+
+`songsOwned` matters more than it looks. Songs grant permanent per-training stat
+bonuses -- "Training Speed Gain +1" -- that add to the base value before every
+multiplier. An observation from Senior year with six songs learned is not
+comparable to one from Junior year with none unless this is recorded.
+Observations before the first concert (turn 24) have no songs at all, which makes
+them the cleanest data in the whole log.
 
 Logs are JSONL — one observation per line, append-only. See
 `examples/calibration-sample.jsonl`.
@@ -107,6 +121,27 @@ and you should fix the diagnostics first.
 npx tsx packages/engine/src/calibration/cli.ts --log examples/calibration-sample.jsonl
 npx tsx packages/engine/src/calibration/cli.ts --log mylog.jsonl --solve
 ```
+
+## What is actually legible
+
+Measured against a real 3840x1080 dual-monitor capture:
+
+| field | legible? |
+|---|---|
+| selected facility and its level ("Wit Lvl 1") | yes, named in a banner |
+| predicted gains (`+4` Speed, `+7` Wit) | yes -- but the badges sit *between* stat columns, so read them at full resolution, not from a thumbnail |
+| current stats and per-run caps | yes |
+| all five facility levels | yes |
+| mood badge | yes |
+| failure % | yes |
+| number of cards on the facility | yes |
+| each card's type icon (speed/wit/friend/...) | yes |
+| each card's bond | to 5 segments = 20 bond each, which is enough: rainbow is 4+ segments |
+| which specific card it is | portrait only -- match against your deck list |
+| energy | bar only, no number |
+
+`tools/screenshots/tile.py` crops and stacks these regions so a whole run can be
+read without opening 80 files.
 
 ## Capture checklist
 

@@ -35,6 +35,16 @@ export interface Observation {
   predictedSkillPoints?: number;
   /** The cards sitting on this facility this turn. */
   cards: ObservedCard[];
+  /**
+   * Song ids owned at this point in the run.
+   *
+   * Songs grant permanent per-training stat bonuses ("Training Speed Gain +1")
+   * that add to the base before every multiplier, so an observation from late in
+   * a career is NOT comparable to an early one unless this is recorded.
+   * Observations before the first concert have none, which makes them the
+   * cleanest calibration data.
+   */
+  songsOwned?: number[];
   growthRate?: Partial<Record<Stat, number>>;
   source?: string;
   note?: string;

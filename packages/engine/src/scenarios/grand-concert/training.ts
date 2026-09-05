@@ -68,6 +68,15 @@ export interface PlacedCard {
 
 export interface TrainingInput {
   facility: Stat;
+  /**
+   * Flat per-training bonuses from songs already learned
+   * ("Training Speed Gain +1"). These add to the BASE value before every
+   * multiplier, so an early purchase compounds across the whole remaining
+   * career -- which is exactly the time-value effect the planner exists to
+   * exploit. Decode them with `accumulatePerTrainingBonuses`.
+   */
+  songBonuses?: Partial<Record<Stat, number>>;
+  songSkillPointBonus?: number;
   facilityLevel: number;
   mood: Mood;
   /** Trainee growth rate for this stat, as a percentage (e.g. 10 for +10%). */
@@ -89,6 +98,7 @@ export interface TrainingResult {
   terms: {
     base: StatVector;
     statBonus: StatVector;
+    songBonus: Partial<Record<Stat, number>>;
     friendship: number;
     mood: number;
     trainingEffectiveness: number;
@@ -168,12 +178,19 @@ export function computeTraining(input: TrainingInput): TrainingResult {
   const {
     facility, facilityLevel, mood, growthRate, cards,
     facilityTable, statCaps, currentStats,
+    songBonuses = {}, songSkillPointBonus = 0,
   } = input;
 
   const assumptions: string[] = [
     "stat-gain formula shape is community-derived (uma.guide), not verified against a logged run",
     "support card effect type ids are community-derived, not decoded from master.mdb",
   ];
+  if (Object.keys(songBonuses).length === 0) {
+    assumptions.push(
+      "no song bonuses supplied -- if songs were owned at this point, their " +
+      "per-training stat bonuses are missing and the gain will be under-predicted",
+    );
+  }
 
   const resolved = resolveBaseTraining(facilityTable, facility, facilityLevel);
   if (resolved.source === "interpolated") {
@@ -184,7 +201,10 @@ export function computeTraining(input: TrainingInput): TrainingResult {
   }
   const base = resolved.values;
 
-  // --- term 1: base + flat stat bonuses from cards -------------------------
+  // --- term 1: base + flat bonuses from cards AND from learned songs -------
+  //
+  // Song bonuses are additive on the base, exactly like a card's stat bonus,
+  // and they apply on every facility rather than only where a card sits.
   const baseVec: StatVector = { ...ZERO_STATS };
   const statBonus: StatVector = { ...ZERO_STATS };
   for (const stat of STATS) {
@@ -192,6 +212,7 @@ export function computeTraining(input: TrainingInput): TrainingResult {
     for (const card of cards) {
       statBonus[stat] += card.effects[STAT_BONUS_KEY[stat]] ?? 0;
     }
+    statBonus[stat] += songBonuses[stat] ?? 0;
   }
 
   // --- term 2: friendship, multiplicative across rainbow cards -------------
@@ -228,7 +249,7 @@ export function computeTraining(input: TrainingInput): TrainingResult {
     gains[stat] = Math.max(0, Math.min(value, statCaps[stat] - currentStats[stat]));
   }
 
-  let skillPoints = base.skill_points ?? 0;
+  let skillPoints = (base.skill_points ?? 0) + songSkillPointBonus;
   for (const card of cards) skillPoints += card.effects.skill_point_bonus ?? 0;
 
   return {
@@ -244,6 +265,7 @@ export function computeTraining(input: TrainingInput): TrainingResult {
       trainingEffectiveness: effTerm,
       cardCount: countTerm,
       growth: growthRate,
+      songBonus: songBonuses,
     },
     assumptions,
   };
