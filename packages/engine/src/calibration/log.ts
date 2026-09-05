@@ -33,6 +33,14 @@ export interface Observation {
   /** Gains exactly as the game displays them, before you click. */
   predictedGains: Partial<Record<Stat, number>>;
   predictedSkillPoints?: number;
+  /**
+   * The "Failure N%" the screen shows for this facility.
+   *
+   * Captured for free alongside the gain, and it calibrates the failure model
+   * the same way the gain calibrates the stat model -- the displayed number is
+   * the game's own output with no RNG in it.
+   */
+  failurePercent?: number;
   /** The cards sitting on this facility this turn. */
   cards: ObservedCard[];
   /**

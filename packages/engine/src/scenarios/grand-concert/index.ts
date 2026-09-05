@@ -80,24 +80,36 @@ export class GrandConcertScenario
   readonly displayName = "Brighter Together! Our Grand Concert";
 
   private readonly facilityTable: FacilityTable;
+  private readonly failureRateBase: Record<string, Record<string, number>>;
   private readonly caps: StatVector;
 
   constructor(
     readonly dataset: GrandConcertDataset,
     private readonly setup: GrandConcertSetup,
   ) {
-    const training = (dataset as unknown as { training?: { facilities: FacilityTable } }).training;
+    const training = (dataset as unknown as {
+      training?: {
+        facilities: FacilityTable;
+        failureRateBase?: Record<string, Record<string, number>>;
+      };
+    }).training;
     if (!training?.facilities) {
       throw new Error(
         "dataset has no training section -- regenerate it with a current extractor",
       );
     }
     this.facilityTable = training.facilities;
+    this.failureRateBase = training.failureRateBase ?? {};
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
   }
 
   get statCaps(): StatVector {
     return { ...this.caps };
+  }
+
+  /** Failure chance for a facility in the given state. Used by policies. */
+  failureChanceFor(state: GcRunState, facility: Stat): number {
+    return this.failureChance(state.scenario, facility, state.energy);
   }
 
   initialState(): GcRunState {
@@ -176,12 +188,12 @@ export class GrandConcertScenario
           currentStats: next.stats,
         });
 
-        // Failure. failureRateBase is stored per mille-ish in master.mdb and its
-        // exact scaling is not yet decoded, so the engine uses a flat, clearly
-        // labelled approximation that falls with energy.
-        const failChance = next.energy >= 60 ? 0 : (60 - next.energy) / 300;
+        const failChance = this.failureChance(s, action.facility, next.energy);
         const failed = chance(rng, failChance);
-        addAssumption(s, "training failure rate is a placeholder, not decoded from master.mdb");
+        addAssumption(s,
+          "failure rate uses the real per-facility base from master.mdb, but the " +
+          "energy scaling curve is an approximation -- the training screen displays " +
+          "the true percentage, so it is directly calibratable from logged captures");
 
         if (failed) {
           next.energy = clamp(next.energy - 10, 0, 100);
@@ -320,6 +332,35 @@ export class GrandConcertScenario
     const level = Math.min(5, 1 + Math.floor(s.facilityUses[facility] / 4));
     if (level > s.facilityLevels[facility]) s.facilityLevels[facility] = level;
     addAssumption(s, "facility level-up thresholds are approximated (one level per 4 uses), not decoded");
+  }
+
+  /**
+   * Chance a training fails.
+   *
+   * The per-facility base comes from `single_mode_training.failure_rate`, and it
+   * encodes something players know well: Wit is structurally much safer than
+   * everything else. Wit sits at 320-324 across levels while Guts runs 532-548,
+   * roughly 40% lower. Combined with Wit being the only facility that *restores*
+   * energy (+5 rather than -19 to -26), that is why Wit clicks are the standard
+   * way to spend a low-energy turn.
+   *
+   * What is NOT decoded is how the base scales with energy. The shape below
+   * hits zero at full energy and rises as energy drains, which is the right
+   * qualitative behaviour, but the curve is a guess. It is calibratable: the
+   * training screen displays the true "Failure N%", so logged captures pin it
+   * exactly. Until then this is flagged in every projection.
+   */
+  private failureChance(s: GrandConcertState, facility: Stat, energy: number): number {
+    const level = String(s.facilityLevels[facility]);
+    const base = this.failureRateBase[facility]?.[level];
+    if (base === undefined) return 0;
+
+    // Normalise the raw table value into a per-facility weight, then scale by
+    // how far energy has fallen. Quadratic so failure stays negligible while
+    // energy is healthy and climbs sharply when it is not.
+    const weight = base / 10000;
+    const drain = Math.max(0, (100 - energy) / 100);
+    return Math.min(0.95, weight * drain * drain * 4);
   }
 
   private growBonds(s: GrandConcertState, facility: Stat): void {

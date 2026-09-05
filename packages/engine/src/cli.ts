@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { STATS, type GrandConcertDataset, type Stat, type StatVector } from "../../data/src/types";
 import { mulberry32 } from "./rng";
 import { GrandConcertScenario, type CardState, type GcRunState } from "./scenarios/grand-concert";
+import { POLICIES, type Policy } from "./policy";
 
 interface Input {
   cards: CardState[];
@@ -38,28 +39,18 @@ function loadDataset(): GrandConcertDataset {
   return JSON.parse(readFileSync(join(gen, file), "utf8"));
 }
 
-/** Baseline policy: shore up whichever target is furthest from being met. */
-function playOne(scenario: GrandConcertScenario, seed: number, target: Partial<Record<Stat, number | null>>): GcRunState {
+function playOne(
+  scenario: GrandConcertScenario,
+  seed: number,
+  target: Partial<Record<Stat, number | null>>,
+  policy: Policy,
+): GcRunState {
   const rng = mulberry32(seed);
   let state = scenario.initialState();
   let guard = 0;
 
   while (!scenario.isTerminal(state) && guard++ < 300) {
-    if (state.energy < 30) {
-      state = scenario.step(state, { kind: "rest" }, rng);
-    } else if (state.mood < 1 && guard % 11 === 0) {
-      state = scenario.step(state, { kind: "outing" }, rng);
-    } else {
-      let pick: Stat = "speed";
-      let worst = Infinity;
-      for (const stat of STATS) {
-        const want = target[stat];
-        const denom = want ?? scenario.statCaps[stat];
-        const ratio = state.stats[stat] / Math.max(1, denom);
-        if (ratio < worst) { worst = ratio; pick = stat; }
-      }
-      state = scenario.step(state, { kind: "train", facility: pick }, rng);
-    }
+    state = scenario.step(state, policy(state, { scenario, target }), rng);
     const shop = scenario.legalShopActions(state).filter((a) => a.kind === "technique");
     if (shop.length) state = scenario.buy(state, shop[0]!);
   }
@@ -90,6 +81,12 @@ function main(): void {
   };
 
   const runs = Number(arg("--runs") ?? 200);
+  const policyName = arg("--policy") ?? "competent";
+  const policy = POLICIES[policyName];
+  if (!policy) {
+    console.error(`unknown policy "${policyName}". Available: ${Object.keys(POLICIES).join(", ")}`);
+    process.exit(1);
+  }
   const seed0 = Number(arg("--seed") ?? 1);
   const statePath = arg("--state");
   const raw = statePath ? readFileSync(statePath, "utf8") : readFileSync(0, "utf8");
@@ -110,7 +107,7 @@ function main(): void {
   let assumptions: string[] = [];
 
   for (let i = 0; i < runs; i++) {
-    const end = playOne(scenario, seed0 + i, target);
+    const end = playOne(scenario, seed0 + i, target, policy);
     finals.push(end.stats);
     if (i === 0) assumptions = end.scenario.assumptions;
     const met = STATS.every((s) => {
@@ -137,6 +134,7 @@ function main(): void {
   process.stdout.write(JSON.stringify({
     scenario: scenario.id,
     dataset: dataset.source.sha256.slice(0, 12),
+    policy: policyName,
     runs,
     goalProbability: {
       p: hits / runs,
