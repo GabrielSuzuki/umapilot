@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/gabrielsuzuki/umapilot/schema/grand-concert.schema.json",
+  "$id": "grand-concert.schema.json",
   "title": "Grand Concert scenario dataset",
   "description": "Extracted from the game's master.mdb by tools/extract/extract.py. Do not hand-edit; regenerate instead.",
   "type": "object",

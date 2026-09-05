@@ -1,10 +1,10 @@
 /**
  * What the user is aiming for.
  *
- * This is the input Gabriel specified: five stat slots for end-of-run targets,
- * plus a searchable list of skills you want to finish the run with. Everything
- * the recommender does is measured against this object, so it is the one type
- * the UI and the engine must agree on exactly.
+ * Five stat slots for end-of-run targets, plus a searchable list of skills you
+ * want to finish the run with. Everything the recommender does is measured
+ * against this object, so it is the one type the UI and the engine must agree
+ * on exactly.
  *
  * Types and validation land now (M0); the UI that produces them lands at M3.
  */
