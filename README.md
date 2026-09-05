@@ -19,9 +19,13 @@ version. Web-only, no install, nothing that touches the game.
 
 Before a run you scan two screens (Support Formation and Legacy Select) and the
 tool reads your six support cards, your legacy setup, and the stat caps that
-apply to *that* run. Scanning is two screenshots dropped onto the page, OCR'd in
-your browser — no install, nothing near the game process. See
-[docs/scan-spec.md](docs/scan-spec.md).
+apply to *that* run — see [docs/scan-spec.md](docs/scan-spec.md).
+
+During a run it gives per-turn advice with **zero interactions per turn**: the
+page watches the game window through the browser's own screen-capture API,
+processes frames locally, and ranks all five facilities before you have finished
+reading the turn. No install, nothing attached to the game process. The design
+and its fallbacks are in [docs/interaction-design.md](docs/interaction-design.md).
 
 ---
 
@@ -156,6 +160,7 @@ cannot tell — so it gets two seconds of confirmation instead.
 | M1b | Validate against logged runs; decode spark and support-effect opcodes | |
 | M2 | Calibration: training-screen log, residual diagnostics, base-value solver | 🟡 tooling built, awaiting real data |
 | M3 | Lesson/song beam-search planner + web UI + pre-run scan | |
+| M3b | Per-turn advice via continuous browser screen capture — see [docs/interaction-design.md](docs/interaction-design.md) | |
 | M4 | Goal probability with confidence intervals | |
 | M5 | Turn recommender using the planner's shadow prices | |
 
