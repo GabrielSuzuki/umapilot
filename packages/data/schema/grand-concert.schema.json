@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/gabrielsuzuki/umapilot/schema/grand-concert.schema.json",
+  "title": "Grand Concert scenario dataset",
+  "description": "Extracted from the game's master.mdb by tools/extract/extract.py. Do not hand-edit; regenerate instead.",
+  "type": "object",
+  "required": ["schemaVersion", "scenario", "source", "constants", "concerts", "techniques", "songs"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "scenario": { "const": "grand-concert" },
+
+    "source": {
+      "type": "object",
+      "required": ["file", "sha256", "extractedAt"],
+      "properties": {
+        "file": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mtime": { "type": "string", "format": "date-time" },
+        "extractedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "constants": {
+      "type": "object",
+      "required": ["tokens", "facilityTokens", "tokenRollWeights", "statCaps", "careerTurns"],
+      "properties": {
+        "tokens": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/tokenName" },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "facilityTokens": {
+          "type": "object",
+          "description": "Which performance token each training facility pays out.",
+          "propertyNames": { "enum": ["speed", "stamina", "power", "guts", "wit"] },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["primary", "secondary"],
+            "properties": {
+              "primary": { "$ref": "#/definitions/tokenName" },
+              "secondary": { "$ref": "#/definitions/tokenName" }
+            }
+          }
+        },
+        "tokenRollWeights": {
+          "type": "object",
+          "description": "Probability the payout is the primary / secondary / some other token.",
+          "required": ["primary", "secondary", "other"],
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "statCaps": {
+          "type": "object",
+          "description": "Per-stat ceiling for this scenario.",
+          "propertyNames": { "enum": ["speed", "stamina", "power", "guts", "wit"] },
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        },
+        "careerTurns": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "concerts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["index", "turn", "songs_for_great_success", "is_grand_concert"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 1 },
+          "turn": { "type": "integer", "minimum": 1 },
+          "songs_for_great_success": { "type": "integer", "minimum": 0 },
+          "is_grand_concert": { "type": "boolean" }
+        }
+      }
+    },
+
+    "techniques": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind", "cost", "effect"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": ["string", "null"] },
+          "kind": { "enum": ["technique_stat", "technique_hint", "technique_energy"] },
+          "cost": { "$ref": "#/definitions/cost" },
+          "effect": { "$ref": "#/definitions/effect" }
+        }
+      }
+    },
+
+    "songs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "cost", "mastery_bonus"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": ["string", "null"] },
+          "cost": { "$ref": "#/definitions/cost" },
+          "mastery_bonus": {
+            "$ref": "#/definitions/effect",
+            "description": "Applies the moment the song is learned."
+          },
+          "concert_bonus_type": {
+            "type": ["integer", "null"],
+            "description": "Applies from the next concert until the end of the career. Opcode not yet decoded."
+          },
+          "concert_bonus_value": { "type": ["integer", "null"] },
+          "live_id": { "type": ["integer", "null"] }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "tokenName": { "enum": ["dance", "passion", "vocal", "visual", "mental"] },
+    "cost": {
+      "type": "object",
+      "description": "Performance token price. Absent tokens are zero.",
+      "required": ["dance", "passion", "vocal", "visual", "mental"],
+      "additionalProperties": false,
+      "properties": {
+        "dance": { "type": "integer", "minimum": 0 },
+        "passion": { "type": "integer", "minimum": 0 },
+        "vocal": { "type": "integer", "minimum": 0 },
+        "visual": { "type": "integer", "minimum": 0 },
+        "mental": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "description": "text is the game's own English wording and is authoritative for humans. raw is the undecoded opcode tuple, preserved so the engine can learn to interpret it without a re-extraction.",
+      "required": ["text", "raw"],
+      "properties": {
+        "text": { "type": ["string", "null"] },
+        "raw": { "type": "array", "items": { "type": "integer" } }
+      }
+    }
+  }
+}
