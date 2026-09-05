@@ -57,5 +57,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      # Skips itself when no dataset is present, which is always true in CI.
+      # Both suites skip themselves when no dataset is present, which is always
+      # true on a runner -- the dataset is generated from a local game install.
       - run: npx tsx packages/engine/test/smoke.ts
+      - run: npx tsx packages/engine/test/simulator.ts

@@ -66,8 +66,27 @@ check("token roll weights sum to 1",
 
 # --- stats -----------------------------------------------------------------
 
-check("STAT_CAPS is keyed by the five stats", set(E.STAT_CAPS) == STATS)
-check("every stat cap is positive", all(v > 0 for v in E.STAT_CAPS.values()))
+# Stat caps are now derived from the database (BASE_STAT_CEILING + the
+# scenario's bonus) and checked against these published figures at extraction
+# time. Here we can only confirm the expectation table is well formed.
+check("published stat caps are keyed by the five stats",
+      set(E.CHECKS["stat_caps"]) == STATS)
+check("every published stat cap exceeds the base ceiling",
+      all(v >= E.BASE_STAT_CEILING for v in E.CHECKS["stat_caps"].values()),
+      f"base ceiling {E.BASE_STAT_CEILING}")
+
+check("training target types are distinct",
+      len(set(E.TRAINING_TARGET_TYPES.values())) == len(E.TRAINING_TARGET_TYPES))
+check("level-1 facility commands cover the five facilities, one each",
+      sorted(E.FACILITY_COMMAND_LV1.values()) == sorted(STATS),
+      str(E.FACILITY_COMMAND_LV1))
+# There is deliberately no hardcoded level-5 table: those command ids follow the
+# canonical stat order, not the command_id order, and assuming otherwise
+# mislabelled three of five facilities. They are read from
+# single_mode_training.base_command_id at extraction time instead.
+check("no hardcoded level-5 facility table exists",
+      not hasattr(E, "FACILITY_COMMAND_LV5"),
+      "level-5 mapping must come from the database")
 
 check("COMMAND_ID_TO_STAT maps onto the five stats, one each",
       sorted(E.COMMAND_ID_TO_STAT.values()) == sorted(STATS),

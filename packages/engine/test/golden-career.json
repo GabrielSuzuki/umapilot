@@ -1,0 +1,40 @@
+{
+  "digest": "e15033fdaee310a5",
+  "summary": {
+    "turn": 73,
+    "stats": {
+      "speed": 372,
+      "stamina": 325,
+      "power": 307,
+      "guts": 357,
+      "wit": 298
+    },
+    "energy": 33,
+    "skillPoints": 553,
+    "tokens": {
+      "dance": 7,
+      "passion": 0,
+      "vocal": 0,
+      "visual": 4,
+      "mental": 4
+    },
+    "tokenCaps": {
+      "dance": 450,
+      "passion": 450,
+      "vocal": 450,
+      "visual": 450,
+      "mental": 450
+    },
+    "songsOwned": 0,
+    "techniquesTotal": 65,
+    "concertsHeld": 5,
+    "bonds": [
+      58,
+      49,
+      39,
+      72,
+      93,
+      60
+    ]
+  }
+}

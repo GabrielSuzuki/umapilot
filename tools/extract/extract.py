@@ -140,10 +140,38 @@ FACILITY_TOKENS = {
 }
 TOKEN_ROLL_WEIGHTS = {"primary": 0.60, "secondary": 0.30, "other": 0.10}
 
-# Stat ceilings for this scenario. Not in master.mdb in a form we've located;
-# sourced from umamusu.wiki and corroborated by the Victoria Frontier guide's
-# pinned correction (Guts 1500).
-STAT_CAPS = {"speed": 1600, "stamina": 1300, "power": 1300, "guts": 1500, "wit": 1300}
+# Grand Concert is scenario_id 3. Confirmed by text_data category 237 index 3 =
+# "Grand Concert", and corroborated by the derived stat caps below.
+GRAND_CONCERT_SCENARIO_ID = 3
+TEXT_SCENARIO_NAME = 237
+
+# Every trainee card in card_rarity_data has max_* = 1200, so 1200 is the base
+# stat ceiling and single_mode_scenario.max_* holds the per-scenario *bonus*,
+# not the cap itself. Derived caps are checked against the published figures in
+# CHECKS["stat_caps"] -- so these are read from the database, not hardcoded.
+BASE_STAT_CEILING = 1200
+
+# single_mode_training_effect.target_type
+TRAINING_TARGET_TYPES = {
+    1: "speed", 2: "stamina", 3: "power", 4: "guts", 5: "wit",
+    10: "energy", 20: "mood", 30: "skill_points",
+}
+# Verified: Speed training yields target 1 + 3 (speed + power) and Stamina
+# training yields 2 + 4 (stamina + guts), matching known game behaviour; target
+# 10 is negative for training and positive for rest, and its level-1 Speed value
+# of -21 in the URA scenario matches uma.guide's published energy cost.
+# target 20 appears only on non-training commands with values +1/+2, so "mood" is
+# INFERRED, not proven. target 101 appears once with value 0 and is left unnamed.
+
+# single_mode_training_effect stores base values for level 1 (command 101-106)
+# and level 5 (601-605). Levels 2-4 are NOT in the database.
+#
+# The level-5 command ids are NOT in the same order as the level-1 ones -- they
+# follow the canonical stat order (speed, stamina, power, guts, wit) rather than
+# the command_id order. Assuming otherwise silently mislabels three of the five
+# facilities, so the mapping is read from single_mode_training.base_command_id
+# at extraction time rather than hardcoded here.
+FACILITY_COMMAND_LV1 = {101: "speed", 102: "power", 103: "guts", 105: "stamina", 106: "wit"}
 
 # Invariants. If any of these break, master.mdb changed in a way that probably
 # invalidates the extractor, and we refuse to emit a dataset.
@@ -156,6 +184,12 @@ CHECKS = {
     "songs_needed_for_great_success": 3,
     "min_songs": 20,   # sanity floor; currently 21
     "max_songs": 30,
+    # Derived as BASE_STAT_CEILING + single_mode_scenario.max_*, checked against
+    # the published Grand Concert caps. Two independent sources agreeing is what
+    # makes the derivation trustworthy.
+    "stat_caps": {
+        "speed": 1600, "stamina": 1300, "power": 1300, "guts": 1500, "wit": 1300
+    },
 }
 
 
@@ -412,6 +446,131 @@ class Extractor:
             })
         return out
 
+    def training(self) -> dict:
+        """Base training values and the scenario's stat caps.
+
+        master.mdb stores base effects for level 1 (command 101-106) and level 5
+        (601-605) only. Levels 2-4 are NOT in the database. We emit what is real
+        and mark the gap rather than inventing a curve -- the run logger is how
+        those levels get calibrated, which is exactly why M1 and M2 belong
+        together.
+        """
+        sid = GRAND_CONCERT_SCENARIO_ID
+        name = self.strip_markup(self.text(TEXT_SCENARIO_NAME, sid))
+        if name != "Grand Concert":
+            die(f"scenario_id {sid} is named {name!r}, expected 'Grand Concert'. "
+                f"Scenario ids shifted; the extractor needs updating.")
+
+        def effects_for(command_id: int) -> dict:
+            out: dict[str, int] = {}
+            unknown: list[list[int]] = []
+            for target_type, value, sub_id, result_state in self.db.execute(
+                "SELECT target_type, effect_value, sub_id, result_state "
+                "FROM single_mode_training_effect "
+                "WHERE scenario_id=? AND command_id=? ORDER BY sub_id, target_type",
+                (sid, command_id),
+            ):
+                key = TRAINING_TARGET_TYPES.get(target_type)
+                if key is None:
+                    unknown.append([target_type, value, sub_id, result_state])
+                    continue
+                # result_state 1 rows are an alternate outcome (e.g. the Wit
+                # facility's energy gain); keep the main line (state 2).
+                if result_state != 2:
+                    continue
+                out[key] = out.get(key, 0) + value
+            if unknown:
+                out["_unknownTargets"] = unknown  # type: ignore[assignment]
+            return out
+
+        # Read the level-5 command ids and what they are variants of, straight
+        # from the database. Never assume the ordering.
+        lv5_commands = {}
+        for command_id, base_command_id in self.db.execute(
+            "SELECT command_id, base_command_id FROM single_mode_training "
+            "WHERE command_id BETWEEN 601 AND 699"
+        ):
+            facility = FACILITY_COMMAND_LV1.get(base_command_id)
+            if facility is None:
+                die(f"level-5 command {command_id} has base_command_id "
+                    f"{base_command_id}, which is not a known facility")
+            lv5_commands[command_id] = facility
+
+        facilities = {}
+        for cid, facility in FACILITY_COMMAND_LV1.items():
+            facilities.setdefault(facility, {})["1"] = {
+                **effects_for(cid), "source": "master.mdb", "commandId": cid,
+            }
+        for cid, facility in lv5_commands.items():
+            facilities.setdefault(facility, {})["5"] = {
+                **effects_for(cid), "source": "master.mdb", "commandId": cid,
+            }
+
+        failure_rates = {}
+        for command_id, level, rate in self.db.execute(
+            "SELECT command_id, command_level, failure_rate FROM single_mode_training "
+            "WHERE command_id IN (101,102,103,105,106) ORDER BY command_id, command_level"
+        ):
+            facility = FACILITY_COMMAND_LV1[command_id]
+            failure_rates.setdefault(facility, {})[str(level)] = rate
+
+        # Non-training commands. Deliberately NOT given names: 301/302/303/304
+        # are rest / outing / infirmary in some order, and we have not proven
+        # which is which. Emitted raw so the simulator can be wired up once the
+        # logger says which is which.
+        other = {}
+        for command_id in (301, 302, 303, 304):
+            variants = []
+            for sub_id, in self.db.execute(
+                "SELECT DISTINCT sub_id FROM single_mode_training_effect "
+                "WHERE scenario_id=? AND command_id=? ORDER BY sub_id", (sid, command_id)
+            ):
+                row: dict[str, int] = {}
+                for target_type, value in self.db.execute(
+                    "SELECT target_type, effect_value FROM single_mode_training_effect "
+                    "WHERE scenario_id=? AND command_id=? AND sub_id=?",
+                    (sid, command_id, sub_id),
+                ):
+                    row[TRAINING_TARGET_TYPES.get(target_type, f"unknown_{target_type}")] = value
+                variants.append({"subId": sub_id, **row})
+            if variants:
+                other[str(command_id)] = variants
+
+        caps_bonus = self.db.execute(
+            "SELECT max_speed, max_stamina, max_pow, max_guts, max_wiz "
+            "FROM single_mode_scenario WHERE id=?", (sid,)
+        ).fetchone()
+        if caps_bonus is None:
+            die(f"no single_mode_scenario row for scenario_id {sid}")
+        stat_caps = {
+            "speed": BASE_STAT_CEILING + caps_bonus[0],
+            "stamina": BASE_STAT_CEILING + caps_bonus[1],
+            "power": BASE_STAT_CEILING + caps_bonus[2],
+            "guts": BASE_STAT_CEILING + caps_bonus[3],
+            "wit": BASE_STAT_CEILING + caps_bonus[4],
+        }
+
+        return {
+            "scenarioId": sid,
+            "scenarioName": name,
+            "statCaps": stat_caps,
+            "statCapDerivation": {
+                "baseCeiling": BASE_STAT_CEILING,
+                "scenarioBonus": dict(zip(
+                    ["speed", "stamina", "power", "guts", "wit"], caps_bonus)),
+                "note": "base ceiling read from card_rarity_data.max_*, which is "
+                        "1200 for every trainee card",
+            },
+            "facilities": facilities,
+            "failureRateBase": failure_rates,
+            "otherCommands": other,
+            "levelsPresent": [1, 5],
+            "levelsMissing": [2, 3, 4],
+            "note": "Base values exist in master.mdb for facility levels 1 and 5 "
+                    "only. Levels 2-4 must be calibrated from logged runs; do not "
+                    "interpolate silently.",
+        }
+
     def sparks(self) -> dict:
         """Succession factors -- the sparks that drive the three inspirations.
 
@@ -506,8 +665,40 @@ class Extractor:
 # Validation
 # --------------------------------------------------------------------------
 
-def validate(songs: list[Song], concerts: list[Concert]) -> list[str]:
+def validate(songs: list[Song], concerts: list[Concert],
+             training: dict | None = None) -> list[str]:
     problems: list[str] = []
+
+    if training is not None:
+        if training["statCaps"] != CHECKS["stat_caps"]:
+            problems.append(
+                "stat caps derived from the database do not match the published "
+                "figures.\n"
+                f"    derived:   {training['statCaps']}\n"
+                f"    published: {CHECKS['stat_caps']}\n"
+                "    -> either the scenario was rebalanced, BASE_STAT_CEILING is "
+                "wrong, or GRAND_CONCERT_SCENARIO_ID points at the wrong scenario."
+            )
+        for facility, levels in training["facilities"].items():
+            for level in ("1", "5"):
+                if level not in levels:
+                    problems.append(f"{facility} training has no level-{level} base values")
+                    continue
+                if levels[level].get("energy", 0) == 0 and facility != "wit":
+                    problems.append(f"{facility} level {level} has no energy cost")
+                # A facility must train its own stat. This is what catches a
+                # mis-ordered command_id mapping -- without it, three of the five
+                # level-5 rows were silently attached to the wrong facility.
+                own = levels[level].get(facility, 0)
+                if own <= 0:
+                    problems.append(
+                        f"{facility} training at level {level} grants no {facility} "
+                        f"(got {levels[level]}). The command_id -> facility mapping "
+                        f"is probably wrong.")
+            if "1" in levels and "5" in levels:
+                if levels["5"].get(facility, 0) < levels["1"].get(facility, 0):
+                    problems.append(
+                        f"{facility} level 5 trains less {facility} than level 1")
 
     totals = {t: 0 for t in TOKENS}
     for s in songs:
@@ -608,13 +799,18 @@ def main() -> None:
         "succession_factor",
         "succession_factor_effect",
         "succession_relation_rank",
+        "single_mode_training",
+        "single_mode_training_effect",
+        "single_mode_scenario",
+        "card_rarity_data",
     ])
 
     techniques = ex.techniques()
     songs = ex.songs()
     concerts = ex.concerts()
 
-    problems = validate(songs, concerts)
+    training = ex.training()
+    problems = validate(songs, concerts, training)
     if problems:
         print("\nvalidation failed:", file=sys.stderr)
         for p in problems:
@@ -637,9 +833,10 @@ def main() -> None:
             "tokens": TOKENS,
             "facilityTokens": FACILITY_TOKENS,
             "tokenRollWeights": TOKEN_ROLL_WEIGHTS,
-            "statCaps": STAT_CAPS,
+            "statCaps": training["statCaps"],
             "careerTurns": max(c.turn for c in concerts),
         },
+        "training": training,
         "concerts": [asdict(c) for c in concerts],
         "techniques": [asdict(t) for t in techniques],
         "songs": [asdict(s) for s in songs],

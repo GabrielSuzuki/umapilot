@@ -9,7 +9,12 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "types": [
+      "node"
+    ]
   },
-  "include": ["packages/*/src/**/*.ts"]
+  "include": [
+    "packages/*/src/**/*.ts"
+  ]
 }

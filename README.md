@@ -9,7 +9,10 @@ with the reasoning shown.
 Currently targets the **Grand Concert** (Grand Live) scenario on the global
 version. Web-only, no install, nothing that touches the game.
 
-> Status: **M0** — data extraction and schema. The engine is not written yet.
+> Status: **M1 in progress** — the forward simulator runs, is reproducible from a
+> seed, and is **not yet accurate**: it projects roughly 2-3x below real runs.
+> [docs/m1-status.md](docs/m1-status.md) says exactly how and why. Do not build a
+> recommendation UI on it until M2 calibrates it against logged runs.
 
 Before a run you scan two screens (Support Formation and Legacy Select) and the
 tool reads your six support cards, your legacy setup, and the stat caps that
@@ -146,7 +149,8 @@ cannot tell — so it gets two seconds of confirmation instead.
 | | | |
 |---|---|---|
 | **M0** | Extractor, schema, types, support cards, sparks | ✅ |
-| M1 | Forward simulator, validated against logged runs; decode spark and support-effect opcodes | |
+| M1 | Forward simulator, pure and seeded; CLI; 33 tests | 🟡 built, uncalibrated |
+| M1b | Validate against logged runs; decode spark and support-effect opcodes | |
 | M2 | Run logger (state → recommendation → outcome) | |
 | M3 | Lesson/song beam-search planner + web UI + pre-run scan | |
 | M4 | Goal probability with confidence intervals | |

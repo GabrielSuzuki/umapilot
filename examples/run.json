@@ -1,0 +1,15 @@
+{
+  "startingStats": { "speed": 109, "stamina": 196, "power": 119, "guts": 92, "wit": 92 },
+  "statCaps": { "stamina": 1366, "power": 1316 },
+  "growthRate": { "stamina": 20 },
+  "facilityLevels": { "speed": 3, "stamina": 2, "power": 2, "guts": 1, "wit": 3 },
+  "target": { "speed": 1000, "stamina": 700, "power": 800, "guts": 400, "wit": 400 },
+  "cards": [
+    { "cardId": 30002, "stat": "speed",   "bond": 0, "effects": { "friendship_bonus": 35, "mood_effect": 40, "training_effectiveness": 15, "speed_bonus": 1, "skill_point_bonus": 1 } },
+    { "cardId": 30004, "stat": "stamina", "bond": 0, "effects": { "friendship_bonus": 30, "mood_effect": 35, "training_effectiveness": 15, "stamina_bonus": 1 } },
+    { "cardId": 30001, "stat": "guts",    "bond": 0, "effects": { "friendship_bonus": 25, "training_effectiveness": 10, "guts_bonus": 1 } },
+    { "cardId": 30005, "stat": "power",   "bond": 0, "effects": { "friendship_bonus": 30, "training_effectiveness": 15, "power_bonus": 1 } },
+    { "cardId": 30003, "stat": "wit",     "bond": 0, "effects": { "friendship_bonus": 20, "training_effectiveness": 10, "wit_bonus": 1 } },
+    { "cardId": 30052, "stat": null,      "bond": 0, "effects": { "mood_effect": 30, "training_effectiveness": 5 } }
+  ]
+}
