@@ -323,5 +323,65 @@ function makeObservations(d: Distortion): Observation[] {
     withoutSongs.assumptions.some((a) => a.includes("no song bonuses supplied")));
 }
 
+// ---------------------------------------------------------------------------
+// Support card effects, verified against the game's own detail panels
+// ---------------------------------------------------------------------------
+
+{
+  const fixture = JSON.parse(
+    readFileSync(join(import.meta.dirname, "fixtures/support-card-panels.json"), "utf8"),
+  );
+  const cardsFile = readdirSync(GEN)
+    .filter((f) => f.startsWith("support-cards.") && !f.includes("latest"))[0];
+
+  if (!cardsFile) {
+    check("support card dataset present for panel verification", false);
+  } else {
+    const cards = JSON.parse(readFileSync(join(GEN, cardsFile), "utf8"));
+    const byId = new Map<number, any>(cards.supportCards.map((c: any) => [c.id, c]));
+
+    let compared = 0;
+    const mismatches: string[] = [];
+    for (const entry of fixture.cards) {
+      const card = byId.get(entry.id);
+      if (!card) { mismatches.push(`${entry.name}: not in dataset`); continue; }
+      for (const [effect, expected] of Object.entries(entry.expect as Record<string, number>)) {
+        const actual = card.effects?.[effect]?.[String(entry.level)];
+        compared++;
+        if (actual !== expected) {
+          mismatches.push(`${entry.name} ${effect}: expected ${expected}, got ${actual}`);
+        }
+      }
+    }
+
+    check("extracted effect values match the in-game panels",
+      mismatches.length === 0,
+      mismatches.length ? mismatches.slice(0, 3).join(" | ") : `${compared} values across ${fixture.cards.length} cards`);
+
+    // The deck tally is a free checksum on card identification -- it is what
+    // catches a card whose type was read off the portrait icon incorrectly.
+    const tally: Record<string, number> = {};
+    for (const entry of fixture.cards) {
+      const card = byId.get(entry.id);
+      if (!card) continue;
+      const key = card.kind === "stat" ? card.stat : card.kind;
+      tally[key] = (tally[key] ?? 0) + 1;
+    }
+    // Compare key-by-key: JSON.stringify is order-sensitive and object key
+    // order here comes from iteration order, which carries no meaning.
+    const expectedTally = fixture.deckNote.expectedTally as Record<string, number>;
+    const tallyKeys = new Set([...Object.keys(tally), ...Object.keys(expectedTally)]);
+    const tallyMatches = [...tallyKeys].every((k) => tally[k] === expectedTally[k]);
+    check("deck type tally matches what the game showed",
+      tallyMatches,
+      `${JSON.stringify(tally)} vs expected ${JSON.stringify(expectedTally)}`);
+
+    check("every effect type the panels verified is one the extractor names",
+      (fixture.verifiedEffectTypes as string[]).every((t) =>
+        fixture.cards.some((c: any) => t in c.expect) === false ||
+        [...byId.values()].some((c: any) => t in (c.effects ?? {}))));
+  }
+}
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

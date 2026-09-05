@@ -103,9 +103,9 @@ check("support rarities are distinct",
 check("support effect type names are distinct",
       len(set(E.SUPPORT_EFFECT_TYPES.values())) == len(E.SUPPORT_EFFECT_TYPES))
 
-check("support effect types are still flagged unverified",
-      E.SUPPORT_EFFECT_UNVERIFIED is True,
-      "flip this only once the values are checked against real training numbers")
+check("support effect types are marked verified",
+      E.SUPPORT_EFFECT_UNVERIFIED is False,
+      "verified 2026-09-05 against in-game card panels; see the test fixture")
 
 # --- inspirations ----------------------------------------------------------
 

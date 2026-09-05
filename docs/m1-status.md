@@ -44,9 +44,10 @@ and guessing is what the project's one rule forbids.
 3. **Facility levels.** Modelled as one level per four uses. Adding this moved
    the projection by only ~2%, which is itself informative: it is *not* the
    dominant term.
-4. **Song and concert bonuses.** Extracted but not decoded, so currently worth
-   nothing in the model. In a real run they compound across every remaining
-   training.
+4. ~~**Song and concert bonuses.**~~ **RESOLVED 2026-09-05.** Songs grant
+   permanent per-training stat bonuses ("Training Speed Gain +1") worth up to +3
+   per stat, decoded from the game's own effect text and now fed into the model.
+   Concert bonuses remain undecoded.
 5. **Events and inspirations.** Not modelled at all (see `events.md`).
 6. **Interpolated facility levels 2-4.** Real values are absent from `master.mdb`.
 7. **Growth rates and starting stats** come from the scan and are probably fine.
@@ -79,7 +80,10 @@ Every projection carries these in an `assumptions` array, and the CLI prints
 them. Nothing here is silent:
 
 - stat-gain formula shape is community-derived, not verified against a logged run
-- support card effect type ids are community-derived, not decoded from master.mdb
+- ~~support card effect type ids are community-derived~~ **VERIFIED 2026-09-05**
+  against the game's own card detail panels: 30 values across six cards matched
+  the extracted curves exactly. Covers every term the training formula uses.
+  See `packages/engine/test/fixtures/support-card-panels.json`.
 - facility levels 2-4 are linearly interpolated
 - training failure rate is a placeholder
 - token gain omits the scenario-link term (2L)

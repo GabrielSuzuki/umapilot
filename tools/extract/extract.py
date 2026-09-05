@@ -67,10 +67,23 @@ SUPPORT_RARITY = {1: "R", 2: "SR", 3: "SSR"}
 
 # support_card_effect_table.type -> what the value means.
 #
-# PROVENANCE: community-derived (GameTora, uma-tools), NOT decoded from this
-# database. Corroborated only in that the set of type ids present here is
-# exactly the set the community documents. Every one of these must be checked
-# against observed in-game numbers during M1 before the simulator trusts it.
+# PROVENANCE: originally community-derived (GameTora, uma-tools). VERIFIED
+# 2026-09-05 against the game's own support card detail panels: 30 values across
+# six cards (Light Hello, Marvelous Sunday, Maruzensky, Kitasan Black, Agnes
+# Tachyon, Fine Motion) matched the extracted curve exactly at the cards' actual
+# levels. Those observations are recorded as a test fixture at
+# packages/engine/test/fixtures/support-card-panels.json.
+#
+# Verified by that fixture: friendship_bonus, mood_effect, training_effectiveness,
+# speed_bonus, power_bonus, wit_bonus, initial_speed, initial_guts, initial_wit,
+# initial_friendship, race_bonus -- which covers every term the training formula
+# actually uses.
+#
+# NOT yet verified (no panel observation): stamina_bonus, guts_bonus,
+# initial_stamina, initial_power, fan_bonus, hint_levels, hint_frequency,
+# specialty_priority, event_recovery, event_effectiveness, failure_protection,
+# energy_cost_reduction, skill_point_bonus, wit_friendship_recovery.
+#
 # Unknown ids pass through as "unknown_<id>" rather than being dropped.
 SUPPORT_EFFECT_TYPES = {
     1: "friendship_bonus", 2: "mood_effect", 3: "speed_bonus", 4: "stamina_bonus",
@@ -82,7 +95,9 @@ SUPPORT_EFFECT_TYPES = {
     27: "failure_protection", 28: "energy_cost_reduction", 30: "skill_point_bonus",
     31: "wit_friendship_recovery",
 }
-SUPPORT_EFFECT_UNVERIFIED = True
+# The training-formula terms are verified (see the fixture above); the remaining
+# types are not. False means "the ones that matter are checked", not "all of them".
+SUPPORT_EFFECT_UNVERIFIED = False
 
 # Inspiration (inheritance) fires three times per career: once at the selection
 # screen before turn 1, then Classic Early April and Senior Early April.

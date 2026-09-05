@@ -1,0 +1,114 @@
+{
+  "_comment": [
+    "Effect values read directly off the game's own support card detail panels,",
+    "captured 2026-09-05 from a live client. This is the third acceptable",
+    "justification in CONTRIBUTING.md -- matches observed in-game behaviour,",
+    "with the observation recorded as a test.",
+    "",
+    "These fixtures are what promote packages/../extract.py's SUPPORT_EFFECT_TYPES",
+    "from 'community-derived, unverified' to verified for the types listed in",
+    "verifiedEffectTypes below. Every value here matched the extracted dataset",
+    "exactly on first comparison.",
+    "",
+    "Only effects VISIBLE in the captured panels are recorded. The panels scroll,",
+    "so absence here means 'not observed', never 'not present'."
+  ],
+  "capturedAt": "2026-09-05",
+  "source": "in-game support card detail panel, global client",
+  "verifiedEffectTypes": [
+    "friendship_bonus",
+    "mood_effect",
+    "training_effectiveness",
+    "speed_bonus",
+    "power_bonus",
+    "wit_bonus",
+    "initial_speed",
+    "initial_guts",
+    "initial_wit",
+    "initial_friendship",
+    "race_bonus"
+  ],
+  "cards": [
+    {
+      "id": 30052,
+      "name": "[From the Ground Up] Light Hello",
+      "level": 50,
+      "expect": {
+        "training_effectiveness": 10,
+        "initial_speed": 30,
+        "initial_guts": 30,
+        "initial_friendship": 30,
+        "race_bonus": 5
+      }
+    },
+    {
+      "id": 20015,
+      "name": "[A Marvelous ☆ Plan] Marvelous Sunday",
+      "level": 45,
+      "expect": {
+        "friendship_bonus": 20,
+        "mood_effect": 40,
+        "wit_bonus": 1,
+        "initial_wit": 20,
+        "initial_friendship": 25
+      }
+    },
+    {
+      "id": 30107,
+      "name": "[Sentimental Flare ♪] Maruzensky",
+      "level": 50,
+      "expect": {
+        "friendship_bonus": 25,
+        "mood_effect": 30,
+        "speed_bonus": 1,
+        "power_bonus": 1,
+        "initial_friendship": 30
+      }
+    },
+    {
+      "id": 30028,
+      "name": "[Fire at My Heels] Kitasan Black",
+      "level": 50,
+      "expect": {
+        "friendship_bonus": 25,
+        "mood_effect": 30,
+        "power_bonus": 1,
+        "training_effectiveness": 10,
+        "initial_friendship": 35
+      }
+    },
+    {
+      "id": 30101,
+      "name": "[Q≠0] Agnes Tachyon",
+      "level": 50,
+      "expect": {
+        "friendship_bonus": 20,
+        "speed_bonus": 1,
+        "training_effectiveness": 5,
+        "initial_speed": 35,
+        "initial_friendship": 20
+      }
+    },
+    {
+      "id": 30010,
+      "name": "[Wave of Gratitude] Fine Motion",
+      "level": 50,
+      "expect": {
+        "friendship_bonus": 25,
+        "mood_effect": 30,
+        "wit_bonus": 1,
+        "training_effectiveness": 15,
+        "initial_wit": 35
+      }
+    }
+  ],
+  "deckNote": {
+    "_comment": [
+      "The deck screen's type tally (shoe x3, cap x2, smiley x1) is a free",
+      "checksum on card identification. It caught a misread here: Agnes Tachyon",
+      "[Q!=0] is a SPEED card, not Wit, despite Tachyon's other cards being Wit.",
+      "Reading the type off the portrait icon would have got it wrong."
+    ],
+    "expectedTally": { "speed": 3, "wit": 2, "friend": 1 }
+  }
+}
