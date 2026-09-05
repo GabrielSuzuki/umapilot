@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run typecheck
+
+  # The dataset is generated from a local game install and is never committed,
+  # so CI cannot run the extractor. What it *can* do is prove the extractor
+  # parses and that its invariants are self-consistent.
+  extractor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Extractor compiles and self-checks
+        run: |
+          python -m py_compile tools/extract/extract.py
+          python tools/extract/selfcheck.py
+
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install jsonschema
+      - name: Schemas are valid JSON Schema
+        run: |
+          python - <<'PY'
+          import json, glob
+          from jsonschema import Draft7Validator
+          for f in glob.glob("packages/data/schema/*.schema.json"):
+              Draft7Validator.check_schema(json.load(open(f)))
+              print("ok", f)
+          PY
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      # Skips itself when no dataset is present, which is always true in CI.
+      - run: npx tsx packages/engine/test/smoke.ts

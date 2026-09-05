@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.png binary
+*.mdb binary
+packages/data/generated/*.json linguist-generated=true

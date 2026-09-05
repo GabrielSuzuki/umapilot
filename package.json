@@ -1,0 +1,18 @@
+{
+  "name": "umapilot",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Goal-conditioned planner for Umamusume career runs",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "extract": "python3 tools/extract/extract.py --out packages/data/generated",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
+}

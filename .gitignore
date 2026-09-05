@@ -1,0 +1,12 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+
+# Game-derived data: generated locally from your own master.mdb, never committed.
+packages/data/generated/*.json
+!packages/data/generated/.gitkeep
+
+# Never commit the game database itself.
+*.mdb
