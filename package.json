@@ -10,8 +10,9 @@
   "scripts": {
     "extract": "python3 tools/extract/extract.py --out packages/data/generated",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx packages/engine/test/smoke.ts && tsx packages/engine/test/simulator.ts",
-    "sim": "tsx packages/engine/src/cli.ts"
+    "test": "tsx packages/engine/test/smoke.ts && tsx packages/engine/test/simulator.ts && tsx packages/engine/test/calibration.ts",
+    "sim": "tsx packages/engine/src/cli.ts",
+    "calibrate": "tsx packages/engine/src/calibration/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

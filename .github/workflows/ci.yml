@@ -61,3 +61,4 @@ jobs:
       # true on a runner -- the dataset is generated from a local game install.
       - run: npx tsx packages/engine/test/smoke.ts
       - run: npx tsx packages/engine/test/simulator.ts
+      - run: npx tsx packages/engine/test/calibration.ts

@@ -58,10 +58,18 @@ looks like a real run would produce a number that matches by construction and
 tells you nothing — and it would bake in whichever wrong assumption happened to
 compensate.
 
-The correct next step is **M2, the run logger**: record state, recommendation and
-actual outcome every turn of a real career, then fit the model to that. One
-logged run distinguishes hypothesis (1) from (2) immediately, because the log
-contains how often rainbow actually fired.
+The correct next step is **M2**, and its tooling now exists: see
+[m2-logging.md](m2-logging.md).
+
+M2 does not log outcomes turn by turn. It captures the **training screen**, which
+displays the game's own predicted gains for all five facilities simultaneously
+with no RNG in them -- five clean observations per screenshot instead of one
+noisy one. The residual analysis then buckets observed/predicted ratios by each
+term's input; whichever grouping shows a trend names the broken term, which is
+what converts the unranked list above into a ranked one.
+
+The diagnostics are tested against synthetic data with a planted bug, so a clean
+reading on real data is evidence rather than wishful.
 
 This is why M1 and M2 were always going to be one piece of work.
 

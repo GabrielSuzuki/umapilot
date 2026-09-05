@@ -9,10 +9,13 @@ with the reasoning shown.
 Currently targets the **Grand Concert** (Grand Live) scenario on the global
 version. Web-only, no install, nothing that touches the game.
 
-> Status: **M1 in progress** — the forward simulator runs, is reproducible from a
-> seed, and is **not yet accurate**: it projects roughly 2-3x below real runs.
-> [docs/m1-status.md](docs/m1-status.md) says exactly how and why. Do not build a
-> recommendation UI on it until M2 calibrates it against logged runs.
+> Status: **M2 tooling built.** The forward simulator runs and is reproducible
+> from a seed, but projects roughly 2-3x below real runs
+> ([docs/m1-status.md](docs/m1-status.md)). The calibration tools that fix that
+> are in place and tested against planted bugs — they now need real observations.
+> [docs/m2-logging.md](docs/m2-logging.md) says what to capture: screenshots of
+> the training screen, which shows the game's own predicted gains for all five
+> facilities at once. Do not build a recommendation UI until this is calibrated.
 
 Before a run you scan two screens (Support Formation and Legacy Select) and the
 tool reads your six support cards, your legacy setup, and the stat caps that
@@ -151,7 +154,7 @@ cannot tell — so it gets two seconds of confirmation instead.
 | **M0** | Extractor, schema, types, support cards, sparks | ✅ |
 | M1 | Forward simulator, pure and seeded; CLI; 33 tests | 🟡 built, uncalibrated |
 | M1b | Validate against logged runs; decode spark and support-effect opcodes | |
-| M2 | Run logger (state → recommendation → outcome) | |
+| M2 | Calibration: training-screen log, residual diagnostics, base-value solver | 🟡 tooling built, awaiting real data |
 | M3 | Lesson/song beam-search planner + web UI + pre-run scan | |
 | M4 | Goal probability with confidence intervals | |
 | M5 | Turn recommender using the planner's shadow prices | |
