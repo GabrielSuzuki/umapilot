@@ -18,12 +18,29 @@ import type { Facility, Stat, StatVector } from "../../data/src/types";
 // Turn actions
 // ---------------------------------------------------------------------------
 
+/**
+ * Everything a turn can be spent on.
+ *
+ * Rest, recreation and optional races are first-class actions, not an
+ * afterthought. They cannot be scored the way training is -- see the note on
+ * shadow prices in docs/interaction-design.md. A myopic "expected stats this
+ * turn" comparison ranks every training above every rest, because rest yields
+ * zero stats. That answer is wrong, and it is wrong structurally rather than by
+ * a tuning margin.
+ */
 export type TurnAction =
   | { kind: "train"; facility: Facility }
   | { kind: "rest" }
   | { kind: "infirmary" }
-  | { kind: "outing" }
-  | { kind: "race"; raceId: number };
+  /**
+   * Recreation. `destination` is one of the named spots from master.mdb --
+   * Riverside, Karaoke, Shrine, Beach -- which differ materially: Beach gives
+   * +40 energy and +1 mood, Karaoke gives +2 mood and no energy. Which is
+   * offered is decided by the game, so a recommender ranks what is on screen
+   * rather than choosing freely.
+   */
+  | { kind: "recreation"; destination?: string }
+  | { kind: "race"; raceId?: number };
 
 /**
  * A purchase made in the scenario's shop. Free in turns, paid in whatever

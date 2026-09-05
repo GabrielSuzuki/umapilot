@@ -89,6 +89,9 @@ export class GrandConcertScenario
 
   private readonly facilityTable: FacilityTable;
   private readonly failureRateBase: Record<string, Record<string, number>>;
+  private readonly otherCommands: Record<string, {
+    name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
+  }>;
   private readonly caps: StatVector;
 
   constructor(
@@ -99,6 +102,9 @@ export class GrandConcertScenario
       training?: {
         facilities: FacilityTable;
         failureRateBase?: Record<string, Record<string, number>>;
+        otherCommands?: Record<string, {
+          name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
+        }>;
       };
     }).training;
     if (!training?.facilities) {
@@ -108,6 +114,7 @@ export class GrandConcertScenario
     }
     this.facilityTable = training.facilities;
     this.failureRateBase = training.failureRateBase ?? {};
+    this.otherCommands = training.otherCommands ?? {};
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
   }
 
@@ -156,7 +163,12 @@ export class GrandConcertScenario
   // -------------------------------------------------------------------------
 
   legalTurnActions(state: GcRunState): TurnAction[] {
-    const out: TurnAction[] = [{ kind: "rest" }, { kind: "outing" }];
+    const out: TurnAction[] = [
+      { kind: "rest" },
+      { kind: "recreation" },
+      { kind: "infirmary" },
+      { kind: "race" },
+    ];
     for (const facility of STATS) {
       // Training below 20 energy is possible in game but reliably a mistake;
       // it stays legal here because the engine must model what the player can
@@ -228,10 +240,20 @@ export class GrandConcertScenario
         addAssumption(s, "rest energy gain is approximate; master.mdb command 303 gives +30/+20/+10 by variant");
         break;
 
-      case "outing":
-        next.mood = clamp(next.mood + 1, -2, 2) as GcRunState["mood"];
-        next.energy = clamp(next.energy + 10, 0, 100);
+      case "recreation": {
+        // Destination payoffs are real, from master.mdb: Riverside +10 energy
+        // +1 mood, Karaoke +2 mood, Shrine +30/+20/+10 energy +1 mood, Beach
+        // +40 energy +1 mood. Which is offered is the game's choice, so with no
+        // destination named we take the middle of the range and say so.
+        const dest = this.recreation(action.destination, rng);
+        next.mood = clamp(next.mood + (dest.mood ?? 0), -2, 2) as GcRunState["mood"];
+        next.energy = clamp(next.energy + (dest.energy ?? 0), 0, 100);
+        if (!action.destination) {
+          addAssumption(s, "recreation destination not specified -- averaged across " +
+            "the destinations master.mdb offers, which range from +0 to +40 energy");
+        }
         break;
+      }
 
       case "infirmary":
         next.energy = clamp(next.energy + 10, 0, 100);
@@ -374,6 +396,21 @@ export class GrandConcertScenario
     const weight = base / 10000;
     const drain = Math.max(0, (100 - energy) / 100);
     return Math.min(0.95, weight * drain * drain * 4);
+  }
+
+  /** Resolve a recreation destination's payoff from the extracted table. */
+  private recreation(destination: string | undefined, rng: Rng): { energy?: number; mood?: number } {
+    const table = this.otherCommands;
+    const entries = Object.values(table).filter((e) => e.kind === "recreation");
+    if (entries.length === 0) return { energy: 20, mood: 1 };
+
+    const named = destination
+      ? entries.find((e) => e.name?.toLowerCase() === destination.toLowerCase())
+      : undefined;
+    const chosen = named ?? entries[Math.floor(rng() * entries.length)]!;
+    const variants = chosen.variants ?? [];
+    if (variants.length === 0) return { energy: 0, mood: 1 };
+    return variants[Math.floor(rng() * variants.length)]!;
   }
 
   private growBonds(s: GrandConcertState, facility: Stat): void {

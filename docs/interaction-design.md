@@ -88,6 +88,61 @@ with the state read off the frame. The UI should still mark predicted values
 distinctly from observed ones, because the honest thing is to show which is
 which.
 
+## The recommendation covers every action, not just the five facilities
+
+Rest, Recreation and optional races are ranked alongside training. They have to
+be — a turn spent resting is a turn not spent training, and that trade is exactly
+where players lose runs.
+
+### Why they cannot be scored the way training is
+
+A training yields stats now. A rest yields **zero** stats. Any per-turn
+"expected stats this turn" comparison therefore ranks every training above every
+rest, always. That answer is not slightly off; it is structurally wrong, and no
+amount of weight-tuning fixes it.
+
+The correct framing is that **energy and mood are resources with shadow prices**:
+
+- **Rest** converts a turn into energy. Energy converts into future trainings.
+  Its value is `energy gained x marginal value of energy - value of the training
+  forgone`. The marginal value of energy comes out of the forward search: how
+  many more good trainings does this energy actually buy before turn 72?
+- **Recreation** converts a turn into mood, and mood is a *multiplier on every
+  remaining training*. So its value scales with turns remaining — worth far more
+  in Junior year than in Senior. Same time-value structure as buying a song
+  early, and for the same reason.
+- **An optional race** buys fans, skill points and a stat bump, and spends energy
+  and a turn. Its value depends on whether fan requirements are actually binding
+  — which only the forward plan knows.
+
+All three are priced by the same mechanism that prices performance tokens. That
+consistency is not a coincidence: it is what a lookahead search gives you for
+free, and it is the strongest argument for making the recommender a search rather
+than a scoring heuristic.
+
+**This is the load-bearing reason M3 is a beam search and not a formula.**
+
+### Recreation destinations are not interchangeable
+
+`master.mdb` names them, and their payoffs differ enough to matter:
+
+| destination | energy | mood |
+|---|---:|---:|
+| Karaoke | — | +2 |
+| Riverside | +10 | +1 |
+| Shrine | +30 / +20 / +10 | +1 |
+| Beach | +40 | +1 |
+
+The game decides which is offered, so the app ranks what is on screen rather than
+choosing freely. But "go to Karaoke" and "go to the Beach" are different
+decisions and the advice should say which.
+
+### What is still missing for races
+
+Race rewards are not yet extracted. Until they are, a race recommendation would
+be guesswork, so the engine exposes the action but flags it. The tables to mine
+are `single_mode_race_group`, `single_mode_route_race` and the race program data.
+
 ## The layout this assumes
 
 The player has two monitors: game on one, tool on the other. That is already how

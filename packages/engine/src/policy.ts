@@ -59,8 +59,8 @@ export const competentPolicy: Policy = (state, { scenario, target = {} }) => {
 
   // Mood is a multiplier on every training; topping it up is usually worth more
   // than the training the outing displaces.
-  if (state.mood < 2 && energy > 45 && state.turn % 7 === 0) return { kind: "outing" };
-  if (state.mood <= -1) return { kind: "outing" };
+  if (state.mood < 2 && energy > 45 && state.turn % 7 === 0) return { kind: "recreation" };
+  if (state.mood <= -1) return { kind: "recreation" };
 
   const FAILURE_LIMIT = 0.15;
   const candidates = STATS.filter((f) => scenario.failureChanceFor(state, f) <= FAILURE_LIMIT);
@@ -166,9 +166,9 @@ export function focusedPolicy(focus: Stat[]): Policy {
     // mood_effect values (30-40 each), so the gap between normal and great is
     // worth roughly 38% on everything. Managing it beats one extra training.
     if (state.mood < 2 && state.energy > 45 && state.turn % 7 === 0) {
-      return { kind: "outing" };
+      return { kind: "recreation" };
     }
-    if (state.mood <= -1) return { kind: "outing" };
+    if (state.mood <= -1) return { kind: "recreation" };
 
     const FAILURE_LIMIT = 0.15;
     const safe = (f: Stat) => scenario.failureChanceFor(state, f) <= FAILURE_LIMIT;

@@ -529,12 +529,15 @@ class Extractor:
             facility = FACILITY_COMMAND_LV1[command_id]
             failure_rates.setdefault(facility, {})[str(level)] = rate
 
-        # Non-training commands. Deliberately NOT given names: 301/302/303/304
-        # are rest / outing / infirmary in some order, and we have not proven
-        # which is which. Emitted raw so the simulator can be wired up once the
-        # logger says which is which.
+        # Recreation destinations. These ARE named -- text_data category 55 gives
+        # 301 Riverside, 302 Karaoke, 303 Shrine, 304 Beach, 305 Hot Springs --
+        # so an earlier note here that they were "rest / outing / infirmary in
+        # some order" was simply wrong; they are five variants of the same
+        # Recreation action with materially different payoffs (Beach is +40
+        # energy, Karaoke is pure mood). The name comes from the database, which
+        # is the first acceptable justification in CONTRIBUTING.md.
         other = {}
-        for command_id in (301, 302, 303, 304):
+        for command_id in (301, 302, 303, 304, 305):
             variants = []
             for sub_id, in self.db.execute(
                 "SELECT DISTINCT sub_id FROM single_mode_training_effect "
@@ -549,7 +552,11 @@ class Extractor:
                     row[TRAINING_TARGET_TYPES.get(target_type, f"unknown_{target_type}")] = value
                 variants.append({"subId": sub_id, **row})
             if variants:
-                other[str(command_id)] = variants
+                other[str(command_id)] = {
+                    "name": self.strip_markup(self.text(TEXT_COMMAND_NAME, command_id)),
+                    "kind": "recreation",
+                    "variants": variants,
+                }
 
         caps_bonus = self.db.execute(
             "SELECT max_speed, max_stamina, max_pow, max_guts, max_wiz "
