@@ -126,6 +126,14 @@ export interface GrandConcertSetup {
   cards: CardState[];
   growthRate?: Partial<Record<Stat, number>>;
   facilityLevels?: Partial<Record<Stat, number>>;
+  /**
+   * Simulate a deck containing a card this scenario bans.
+   *
+   * Off by default, and it should stay off outside experiments: a plan built on
+   * a deck the game will not let you field is worse than no plan, because it
+   * looks actionable. See `restrictedCards()`.
+   */
+  allowRestrictedCards?: boolean;
 }
 
 export class GrandConcertScenario
@@ -183,6 +191,20 @@ export class GrandConcertScenario
       memberCount: o.memberOutings?.length ?? 0,
     }));
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
+
+    // Refuse a deck the game will not let the player field. Modelling it would
+    // produce a confident recommendation for a run that cannot happen.
+    if (!setup.allowRestrictedCards) {
+      const banned = GrandConcertScenario.findRestricted(dataset, setup.cards);
+      if (banned.length > 0) {
+        const names = banned.map((b) => `${b.cardName ?? b.cardId} (${b.cardId})`).join(", ");
+        throw new Error(
+          `Grand Concert does not allow ${names}. ` +
+          `single_mode_restrict_support bans it from this scenario, confirmed in game. ` +
+          `Remove it from the deck, or pass allowRestrictedCards to simulate anyway.`,
+        );
+      }
+    }
   }
 
   get statCaps(): StatVector {
@@ -558,29 +580,45 @@ export class GrandConcertScenario
   }
 
   /**
-   * Support cards in this deck that `single_mode_restrict_support` ties to this
-   * scenario -- currently only Team Sirius, against Grand Concert.
+   * Cards in this deck that Grand Concert BANS.
    *
-   * master.mdb does not say whether "restrict" means banned from or exclusive
-   * to, so this reports the fact and refuses to decide. A deck screen should
-   * show it and ask; silently dropping the card, or silently keeping it, both
-   * risk being exactly wrong.
+   * `single_mode_restrict_support` lists exactly one: [Passing the Dream On]
+   * Team Sirius (30081). The table does not say which way "restrict" points, so
+   * this shipped undecided; verified in game 2026-09-06, the card is absent from
+   * the Grand Concert support selection screen. It means banned from.
+   *
+   * So Grand Concert has exactly ONE usable group card, Heirs to the Throne.
+   * That is worth knowing before spending anything on the other one.
+   *
+   * The constructor refuses such a deck outright rather than quietly modelling
+   * it, because a plan built on a deck the game will not let you field is worse
+   * than no plan -- it looks actionable. This method exists so a deck screen can
+   * explain the refusal, and for the `allowRestrictedCards` escape hatch.
    */
   restrictedCards(): Array<{ cardId: number; cardName?: string | undefined; semantics: string }> {
-    const r = (this.dataset as unknown as {
+    return GrandConcertScenario.findRestricted(this.dataset, this.setup.cards);
+  }
+
+  private static findRestricted(
+    dataset: GrandConcertDataset,
+    cards: Array<{ cardId: number }>,
+  ): Array<{ cardId: number; cardName?: string | undefined; semantics: string }> {
+    const r = (dataset as unknown as {
       scenarioRestrictions?: {
         rows?: Array<{ scenarioId: number; cardId: number; cardName?: string }>;
         semantics?: string;
       };
     }).scenarioRestrictions;
     if (!r?.rows) return [];
-    const deck = new Set(this.setup.cards.map((c) => c.cardId));
+    // An older dataset predates the in-game check and cannot support a refusal.
+    if (r.semantics !== "banned_from") return [];
+    const deck = new Set(cards.map((c) => c.cardId));
     return r.rows
       .filter((row) => row.scenarioId === GRAND_CONCERT_SCENARIO_ID && deck.has(row.cardId))
       .map((row) => ({
         cardId: row.cardId,
         cardName: row.cardName,
-        semantics: r.semantics ?? "unknown",
+        semantics: r.semantics!,
       }));
   }
 

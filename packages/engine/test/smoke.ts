@@ -149,11 +149,16 @@ check("friendEvents stays the friend-only subset",
 
 // --- scenario restrictions ----------------------------------------------
 const restr = (ds as any).scenarioRestrictions;
-check("Team Sirius is listed against Grand Concert",
-  restr.rows.some((r: any) => r.cardId === 30081 && r.scenarioId === 3));
-check("restriction semantics are explicitly unresolved",
-  restr.semantics === "unknown",
-  "banned-from vs exclusive-to changes the answer; master.mdb does not say");
+check("Team Sirius is banned from Grand Concert",
+  restr.rows.some((r: any) => r.cardId === 30081 && r.scenarioId === 3) &&
+  restr.semantics === "banned_from",
+  `verified in game ${restr.verifiedInGame} -- the card is absent from the ` +
+  "Grand Concert support selection screen");
+check("Grand Concert has exactly one usable group card",
+  cards.supportCards.filter((c: any) =>
+    c.kind === "group" && !c.restrictedScenarios.includes(3)).length === 1,
+  "Heirs to the Throne; Team Sirius is banned, so its 15% friendship bonus and " +
+  "7-outing bill never apply here");
 
 // --- sparks / inspirations ----------------------------------------------
 const sparks = JSON.parse(readFileSync(join(GEN, pick("sparks.")), "utf8"));

@@ -263,6 +263,53 @@ check("an interpolated level sits between the two known ones",
   check("the full outing bill is reported",
     total === 35,
     `${total} turns of outings across all 7 companions, against a 72-turn career`);
+
+  // Team Sirius is banned from Grand Concert, so the bill a real run can
+  // actually face is smaller than the dataset-wide total.
+  const playable = status.filter((c) => c.charaId !== 30081)
+    .reduce((n, c) => n + c.total, 0);
+  check("the bill a Grand Concert run can face excludes the banned card",
+    playable === 28, `${playable} turns once Team Sirius is out`);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario card restrictions
+//
+// single_mode_restrict_support bans Team Sirius from Grand Concert. Confirmed in
+// game 2026-09-06: it is not selectable. A plan built on a deck the game will
+// not let you field is worse than no plan, so the scenario refuses it.
+// ---------------------------------------------------------------------------
+
+{
+  const bannedDeck = [
+    { cardId: 30081, stat: null, kind: "group" as const, bond: 0, effects: {} },
+  ];
+  let threw = "";
+  try {
+    new GrandConcertScenario(dataset, { cards: bannedDeck });
+  } catch (e) {
+    threw = (e as Error).message;
+  }
+  check("a deck with Team Sirius is refused in Grand Concert",
+    threw.includes("30081"), threw || "no error thrown");
+  check("the refusal names the card and the way out",
+    threw.includes("Team Sirius") && threw.includes("allowRestrictedCards"),
+    threw);
+
+  let escaped = true;
+  try {
+    new GrandConcertScenario(dataset, { cards: bannedDeck, allowRestrictedCards: true });
+  } catch {
+    escaped = false;
+  }
+  check("the escape hatch still allows an explicit experiment", escaped);
+
+  const legal = new GrandConcertScenario(dataset, {
+    cards: [{ cardId: 30067, stat: null, kind: "group" as const, bond: 0, effects: {} }],
+  });
+  check("Heirs to the Throne is legal in Grand Concert",
+    legal.restrictedCards().length === 0,
+    "the only group card this scenario can actually use");
 }
 
 // ---------------------------------------------------------------------------

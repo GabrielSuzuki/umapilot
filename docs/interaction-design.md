@@ -149,10 +149,10 @@ two turns.
 characters packed into the card, each with its own independent one-step outing,
 *plus* the card owns a short chain of its own:
 
-| group card | members | card chain | total outings |
-|---|---:|---:|---:|
-| [Esteemed and Adored] Heirs to the Throne | 3 | 2 | **5** |
-| [Passing the Dream On] Team Sirius | 6 | 1 | **7** |
+| group card | members | card chain | total outings | legal in Grand Concert |
+|---|---:|---:|---:|---|
+| [Esteemed and Adored] Heirs to the Throne | 3 | 2 | **5** | yes |
+| [Passing the Dream On] Team Sirius | 6 | 1 | **7** | **no — banned** |
 
 Team Sirius is the largest standing turn commitment of any companion in the
 game — seven turns against Light Hello's five — and none of that is visible from
@@ -168,9 +168,9 @@ progress value. Only the total is checkable; the split is not.
 
 This is a **deadline-constrained scheduling problem**, structurally identical to
 the song unlock gates: the outings have to fit somewhere in 72 turns, and each
-one displaces a training. Run every companion in the dataset and the bill is 35
-turns — nearly half a career — so which companions to take is itself a planning
-decision rather than a given.
+one displaces a training. Run every companion Grand Concert allows and the bill
+is 28 turns — well over a third of a career — so which companions to take is
+itself a planning decision rather than a given.
 
 **The two kinds fail differently, and a planner must not treat them alike.** A
 friend chain is ordered and pays out at the end, so abandoning it part-way wastes
@@ -230,18 +230,27 @@ alternative (no bond gate at all) predicts a measurably different curve early in
 a career. One logged run with a group card in the deck separates them, and the
 projection says so in its `assumptions` until then.
 
-### One open question worth a single in-game look
+### Only one of the two group cards is usable here
 
 `single_mode_restrict_support` holds exactly two rows, both for **Team Sirius**,
-against Unity Cup and **Grand Concert**. The schema does not say whether
-"restrict" means *banned from* or *exclusive to*, and with one card in the table
-there is no second example to disambiguate against. Both readings change a deck
-recommendation, and getting it backwards would be worse than saying nothing.
+against Unity Cup and **Grand Concert**. The schema does not say which way
+"restrict" points — *banned from*, or *usable only in* — and one card in the
+table gives nothing to disambiguate against. Both readings flip a deck
+recommendation, so this shipped as `semantics: "unknown"` rather than a guess.
 
-The dataset therefore carries the rows with `semantics: "unknown"`, and
-`restrictedCards()` surfaces the fact without deciding. **Open a Grand Concert
-run and see whether Team Sirius is selectable** — that settles it in one look,
-and is the only thing blocking this from being modelled properly.
+**Resolved 2026-09-06, checked in game: Team Sirius is not selectable in a Grand
+Concert run.** "Restrict" means banned from.
+
+So Grand Concert has exactly **one** usable group card, Heirs to the Throne.
+Team Sirius's 15% friendship bonus, its `training_effectiveness +10` at bond 80,
+and its seven-outing bill never apply here — which also drops the outing bill a
+real run can face from 35 turns to **28**. It stays in the dataset because the
+ban is per-scenario and the engine is built to take a second scenario later.
+
+The scenario constructor now **refuses** a deck containing it. A plan built on a
+deck the game will not let you field is worse than no plan, because it looks
+actionable; `restrictedCards()` exists so a deck screen can explain the refusal,
+and `allowRestrictedCards` is there for deliberate experiments.
 
 ### What is still missing for races
 

@@ -907,21 +907,24 @@ class Extractor:
         return out
 
     def scenario_restrictions(self) -> dict:
-        """Support cards that `single_mode_restrict_support` ties to a scenario.
+        """Support cards BANNED from a scenario by `single_mode_restrict_support`.
 
-        SEMANTICS ARE NOT ESTABLISHED. The table holds exactly two rows, both for
-        [Passing the Dream On] Team Sirius (30081), against scenario 2 (Unity
-        Cup) and scenario 3 (GRAND CONCERT -- the scenario this project models).
-        The column names do not say whether "restrict" means
+        The table holds exactly two rows, both for [Passing the Dream On] Team
+        Sirius (30081): scenario 2 (Unity Cup) and scenario 3 (Grand Concert).
 
-            (a) this card is BANNED from those scenarios, or
-            (b) this card is only USABLE in those scenarios,
+        The schema does not say which way "restrict" points -- banned FROM the
+        listed scenarios, or usable ONLY in them -- and one card in the table
+        gives nothing to disambiguate against. Both readings flip a deck
+        recommendation, so this shipped as `semantics: "unknown"` until it could
+        be checked rather than guessed.
 
-        and with a single card in the table there is no second example to
-        disambiguate against. Both readings materially change a deck
-        recommendation, so the rows are emitted verbatim with the ambiguity
-        attached rather than resolved by guesswork. One look at the in-game
-        support selection screen during a Grand Concert run settles it.
+        RESOLVED 2026-09-06, verified in game: Team Sirius is NOT selectable in a
+        Grand Concert run. "Restrict" means BANNED FROM.
+
+        That leaves Grand Concert with exactly one usable group card, Heirs to
+        the Throne (30067). Team Sirius stays in the dataset because the engine
+        is built to take a second scenario later and the ban is per-scenario, not
+        global.
         """
         rows = []
         for _id, scenario_id, card_id in self.db.execute(
@@ -938,10 +941,11 @@ class Extractor:
             })
         return {
             "rows": rows,
-            "semantics": "unknown",
-            "note": "master.mdb does not say whether these cards are banned from "
-                    "the listed scenarios or exclusive to them; verify in game "
-                    "before acting on it",
+            "semantics": "banned_from",
+            "verifiedInGame": "2026-09-06",
+            "note": "a card listed here cannot be selected in the listed scenario; "
+                    "verified in game -- Team Sirius is absent from the Grand "
+                    "Concert support selection screen",
         }
 
 
