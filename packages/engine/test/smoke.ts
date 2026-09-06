@@ -106,7 +106,7 @@ check("friend and group cards carry no facility",
 check("charaName resolves on every card",
   cards.supportCards.every((c: any) => !!c.charaName),
   "text_data category 77 is keyed by CARD id, 6 by CHARA id -- using the wrong " +
-  "one returns null silently on all 235");
+  "one returns null silently on every card");
 
 // --- group cards --------------------------------------------------------
 //

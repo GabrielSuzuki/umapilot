@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# A compromised action cannot write to the repo. Nothing here needs more than
+# read, and the default token grants more than that.
+permissions:
+  contents: read
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
@@ -62,3 +67,55 @@ jobs:
       - run: npx tsx packages/engine/test/smoke.ts
       - run: npx tsx packages/engine/test/simulator.ts
       - run: npx tsx packages/engine/test/calibration.ts
+
+  # The one security control this project actually needs enforced: the player's
+  # game data and identity must never enter the repo. .gitignore covers it, but
+  # .gitignore is advice -- a `git add -f`, or a file staged before the rule
+  # existed, defeats it silently. This makes it a build failure instead.
+  no-game-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No game database or generated dataset is tracked
+        run: |
+          set -e
+          if git ls-files | grep -E '\.mdb$|^packages/data/generated/.*\.json$'; then
+            echo "::error::game data is tracked -- see SECURITY.md"
+            exit 1
+          fi
+          echo "ok: no .mdb or generated dataset in the tree"
+      - name: No obvious secrets are tracked
+        run: |
+          set -e
+          # Deliberately narrow. A broad regex over a repo full of game text
+          # cries wolf, and a check nobody trusts is a check nobody reads.
+          # Pathspec exclusions belong to git ls-files, not grep -- this file
+          # and SECURITY.md both quote the patterns they search for.
+          if git ls-files -z -- . ':!SECURITY.md' ':!.github/workflows/ci.yml' \
+              | xargs -0 --no-run-if-empty grep -nIE \
+              'BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}'; then
+            echo "::error::a credential-shaped string is tracked"
+            exit 1
+          fi
+          echo "ok: no credential patterns found"
+      - name: No .env files
+        run: |
+          set -e
+          if git ls-files | grep -E '(^|/)\.env'; then
+            echo "::error::an .env file is tracked"
+            exit 1
+          fi
+          echo "ok: no .env tracked"
+
+  # Zero runtime dependencies and three dev ones, so this should stay quiet.
+  # If it ever gets noisy, the answer is usually to drop a dependency rather
+  # than to raise the threshold.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm audit --audit-level=high
