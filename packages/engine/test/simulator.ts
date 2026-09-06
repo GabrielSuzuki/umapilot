@@ -17,6 +17,7 @@ import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
+import { decodeEffectText } from "../../data/src/effects";
 import { mulberry32 } from "../src/rng";
 import {
   GrandConcertScenario, resolveBaseTraining, computeTraining,
@@ -91,9 +92,18 @@ function playCareer(seed: number): { state: GcRunState; turns: number } {
       state = scenario.step(state, { kind: "train", facility: pick }, rng);
     }
 
-    // Spend tokens greedily on the cheapest affordable technique.
-    const shop = scenario.legalShopActions(state).filter((a) => a.kind === "technique");
-    if (shop.length) state = scenario.buy(state, shop[0]!);
+    // Songs first, then techniques -- the same rule greedyShop() and the CLI
+    // use. It used to buy techniques ONLY, so the golden career finished with
+    // songsOwned: 0 and the entire song path -- mastery bonuses, per-training
+    // stat gains, the Great Success gate -- was covered by no regression at
+    // all. That is how the song-bonus wiring could be missing for two
+    // milestones without a single test noticing.
+    for (let i = 0; i < 4; i++) {
+      const shop = scenario.legalShopActions(state);
+      const pick = shop.find((a) => a.kind === "song") ?? shop.find((a) => a.kind === "technique");
+      if (!pick) break;
+      state = scenario.buy(state, pick);
+    }
     turns++;
   }
   return { state, turns };
@@ -333,6 +343,98 @@ check("an interpolated level sits between the two known ones",
   const c = playCareer(999);
   check("a different seed produces a different career",
     JSON.stringify(a.state) !== JSON.stringify(c.state));
+}
+
+// ---------------------------------------------------------------------------
+// The three silent holes M3 found, pinned against the REAL dataset
+// ---------------------------------------------------------------------------
+
+/*
+ * planner.ts already pins all three, but on a synthetic fixture -- which proves
+ * the wiring exists, not that it does anything to this game's actual data. The
+ * song check below is the one that matters: the engine decodes English text
+ * with strict regexes, so if Grand Concert's real song descriptions do not
+ * match them, the fix is real and its effect is zero.
+ *
+ * None of these depend on the rng stream, which the golden digest does. That is
+ * deliberate: after a change like this one, the digest moves for reasons that
+ * are mostly reshuffled luck, and a summary you cannot read is not a check.
+ */
+{
+  const scenario = makeScenario();
+  const start = scenario.initialState();
+
+  const placed = STATS.reduce((n, f) => n + start.scenario.placement[f].length, 0);
+  check("cards are on the board before the first turn is played",
+    placed === CARDS.length, `${placed} of ${CARDS.length} placed`);
+
+  const snapshot = JSON.stringify(start);
+  const rec = scenario.step(start, { kind: "recreation" }, mulberry32(7));
+  check("recreation changes the run",
+    rec.mood !== start.mood || rec.energy !== start.energy,
+    `mood ${start.mood} -> ${rec.mood}, energy ${start.energy} -> ${rec.energy}`);
+  check("step still does not mutate its input", JSON.stringify(start) === snapshot);
+
+  let threw = false;
+  try {
+    scenario.step(start, { kind: "outing" } as never, mulberry32(1));
+  } catch { threw = true; }
+  check("an unrecognised action is rejected, not silently a wasted turn", threw);
+}
+
+{
+  // How much of the real song list the decoder actually understands. Not
+  // pinned to a count -- a patch that adds songs is not a regression -- but a
+  // decode rate of zero would mean the song wiring changes nothing in practice.
+  let perTraining = 0;
+  let oneOff = 0;
+  const unknown = new Set<string>();
+  for (const song of dataset.songs) {
+    const d = decodeEffectText(song.mastery_bonus.text);
+    if (Object.keys(d.perTrainingStat).length > 0 || d.perTrainingSkillPoints > 0) perTraining++;
+    if (Object.keys(d.oneOffStat).length > 0 || d.oneOffSkillPoints > 0 || d.oneOffEnergy > 0) oneOff++;
+    // A range clause is recorded in `unparsed` even though it WAS understood --
+    // it is flagged because the midpoint is an approximation, not because the
+    // parser failed. Only genuinely unrecognised clauses count here.
+    for (const u of d.unparsed) {
+      if (!u.startsWith("range approximated by midpoint:")) unknown.add(u);
+    }
+  }
+  check("real song text decodes into per-training bonuses", perTraining > 0,
+    `${perTraining} of ${dataset.songs.length} songs grant a per-training bonus, ` +
+    `${oneOff} grant something one-off`);
+  check("no song effect clause is silently ignored", unknown.size === 0,
+    unknown.size === 0
+      ? "every clause recognised"
+      : `${unknown.size} unrecognised, each contributing nothing: ` +
+        [...unknown].slice(0, 3).join(" | "));
+
+  const scenario = makeScenario();
+  const start = scenario.initialState();
+  const song = dataset.songs.find(
+    (s) => Object.keys(decodeEffectText(s.mastery_bonus.text).perTrainingStat).length > 0,
+  );
+  if (!song) {
+    check("a song granting a per-training stat bonus exists to test with", false);
+  } else {
+    const stat = Object.keys(
+      decodeEffectText(song.mastery_bonus.text).perTrainingStat,
+    )[0] as Stat;
+    const funded: GcRunState = {
+      ...start,
+      scenario: {
+        ...start.scenario,
+        tokens: { dance: 999, passion: 999, vocal: 999, visual: 999, mental: 999 },
+      },
+    };
+    const owned = scenario.buy(funded, { kind: "song", id: song.id });
+    const without = scenario.step(funded, { kind: "train", facility: stat }, mulberry32(99));
+    const with_ = scenario.step(owned, { kind: "train", facility: stat }, mulberry32(99));
+    check(`owning "${song.name ?? song.id}" raises what ${stat} training yields`,
+      with_.stats[stat] - owned.stats[stat] > without.stats[stat] - funded.stats[stat],
+      `+${without.stats[stat] - funded.stats[stat]} without, ` +
+      `+${with_.stats[stat] - owned.stats[stat]} with`);
+  }
 }
 
 // ---------------------------------------------------------------------------
