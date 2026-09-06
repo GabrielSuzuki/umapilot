@@ -13,7 +13,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { STATS, type GrandConcertDataset, type Stat, type StatVector } from "../../data/src/types";
-import { mulberry32 } from "./rng";
+import { mulberry32, type Rng } from "./rng";
 import { GrandConcertScenario, type CardState, type GcRunState } from "./scenarios/grand-concert";
 import { POLICIES, type Policy } from "./policy";
 import { greedyShop } from "./planner/rollout";
@@ -52,7 +52,7 @@ function playOne(
 
   while (!scenario.isTerminal(state) && guard++ < 300) {
     state = scenario.step(state, policy(state, { scenario, target }), rng);
-    state = shop(scenario, state);
+    state = shop(scenario, state, rng);
   }
   return state;
 }
@@ -66,8 +66,8 @@ function playOne(
  * song on 0 of 72 turns -- see greedyShop for why. Two copies of a bug is how
  * fixing one of them looks like fixing both.
  */
-function shop(scenario: GrandConcertScenario, state: GcRunState): GcRunState {
-  return greedyShop(scenario, state, 4);
+function shop(scenario: GrandConcertScenario, state: GcRunState, rng: Rng): GcRunState {
+  return greedyShop(scenario, state, 4, rng);
 }
 
 function percentile(sorted: number[], p: number): number {

@@ -101,7 +101,7 @@ function playCareer(seed: number): { state: GcRunState; turns: number } {
     // to "songs first, then techniques" did not help: measured on real data a
     // song was affordable on 0 of 72 turns, so first-among-affordable never
     // reached one. See greedyShop.
-    state = greedyShop(scenario, state, 4);
+    state = greedyShop(scenario, state, 4, rng);
     turns++;
   }
   return { state, turns };
@@ -478,7 +478,7 @@ check("an interpolated level sits between the two known ones",
         tokens: { dance: 999, passion: 999, vocal: 999, visual: 999, mental: 999 },
       },
     };
-    const owned = scenario.buy(funded, { kind: "song", id: song.id });
+    const owned = scenario.buy(funded, { kind: "song", id: song.id }, mulberry32(1));
     const without = scenario.step(funded, { kind: "train", facility: stat }, mulberry32(99));
     const with_ = scenario.step(owned, { kind: "train", facility: stat }, mulberry32(99));
     check(`owning "${song.name ?? song.id}" raises what ${stat} training yields`,
@@ -504,18 +504,20 @@ check("an interpolated level sits between the two known ones",
 {
   const scenario = makeScenario();
 
-  const legacyShop = (state: GcRunState, n: number): GcRunState => {
+  type Shop = (s: GcRunState, n: number, rng: ReturnType<typeof mulberry32>) => GcRunState;
+
+  const legacyShop: Shop = (state, n, rng) => {
     let x = state;
     for (let i = 0; i < n; i++) {
       const a = scenario.legalShopActions(x);
       const pick = a.find((y) => y.kind === "song") ?? a.find((y) => y.kind === "technique");
       if (!pick) break;
-      x = scenario.buy(x, pick);
+      x = scenario.buy(x, pick, rng);
     }
     return x;
   };
 
-  const play = (seed: number, shop: (s: GcRunState, n: number) => GcRunState) => {
+  const play = (seed: number, shop: Shop) => {
     let state = scenario.initialState();
     const rng = mulberry32(seed);
     let affordable = 0;
@@ -530,13 +532,13 @@ check("an interpolated level sits between the two known ones",
         ? scenario.step(state, { kind: "rest" }, rng)
         : scenario.step(state, { kind: "train", facility: pick }, rng);
       if (scenario.legalShopActions(state).some((a) => a.kind === "song")) affordable++;
-      state = shop(state, 4);
+      state = shop(state, 4, rng);
     }
     return { state, affordable };
   };
 
   const legacy = play(20260905, legacyShop);
-  const shipped = play(20260905, (st, n) => greedyShop(scenario, st, n));
+  const shipped = play(20260905, (st, n, rng) => greedyShop(scenario, st, n, rng));
 
   check("the pre-fix shop rule bought no song in a real career",
     legacy.state.scenario.songsOwned.length === 0,
@@ -612,14 +614,14 @@ check("an interpolated level sits between the two known ones",
     shop.some((a) => a.kind === "technique") && shop.some((a) => a.kind === "song"));
 
   const song = shop.find((a) => a.kind === "song")!;
-  const after = scenario.buy(state, song);
+  const after = scenario.buy(state, song, mulberry32(1));
   check("buying a song adds it and deducts its cost",
     after.scenario.songsOwned.length === 1 &&
     TOKENS.some((t) => after.scenario.tokens[t] < state.scenario.tokens[t]));
   check("buying a song costs no turn", after.turn === state.turn);
 
   let threw = false;
-  try { scenario.buy(after, song); } catch { threw = true; }
+  try { scenario.buy(after, song, mulberry32(1)); } catch { threw = true; }
   check("buying the same song twice is rejected", threw);
 }
 

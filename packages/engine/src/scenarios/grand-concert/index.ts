@@ -24,6 +24,10 @@ import {
   MOOD_VALUES, type Mood, type PlacedCard, type FacilityTable,
 } from "./training";
 import type { RunState, TurnAction, ShopAction, Scenario } from "../../scenario";
+import {
+  LESSON_OFFERS, eligibleSquares, rollOffers,
+  TIER_GATE_SOURCE, SONG_GATE_SOURCE, OFFER_DRAW_SOURCE,
+} from "./lesson-board";
 
 /** The Grand Concert scenario id in master.mdb. */
 const GRAND_CONCERT_SCENARIO_ID = 3;
@@ -95,6 +99,20 @@ export interface GrandConcertState {
    * identified as the single biggest gap in every rival planner.
    */
   concertBonusesActive: number[];
+  /**
+   * The three lessons currently on the board, as square ids.
+   *
+   * The game shows THREE, and buying one draws three more. It used to be
+   * modelled as a catalogue -- every affordable technique, up to 248 -- which
+   * let the planner name the globally cheapest one and call it advice, when
+   * that square was almost certainly not on the player's screen.
+   *
+   * Re-rolled on every purchase, exactly as `placement` is re-rolled every
+   * turn. That makes `buy` stochastic, which the beam search already handles.
+   */
+  offers: number[];
+  /** Songs bought since the last concert. Indexes into the unlock sequence. */
+  songsThisPhase: number;
   /** Techniques bought since the last concert. Gates the next song unlock. */
   techniquesThisPhase: number;
   techniquesTotal: number;
@@ -284,6 +302,8 @@ export class GrandConcertScenario
         tokenCaps: { dance: cap, passion: cap, vocal: cap, visual: cap, mental: cap },
         songsOwned: [],
         concertBonusesActive: [],
+        offers: [],
+        songsThisPhase: 0,
         techniquesThisPhase: 0,
         techniquesTotal: 0,
         concertsHeld: 0,
@@ -304,7 +324,28 @@ export class GrandConcertScenario
       },
     };
     this.rollPlacement(state, rng);
+    this.rollBoard(state, rng);
     return state;
+  }
+
+  /**
+   * Draw the three lessons on offer.
+   *
+   * Called at career start and after every purchase -- not every turn. The
+   * board persists across turns; only buying changes it.
+   */
+  private rollBoard(state: GcRunState, rng: Rng): void {
+    const s = state.scenario;
+    const pool = eligibleSquares(this.dataset, {
+      concertsHeld: s.concertsHeld,
+      techniquesThisPhase: s.techniquesThisPhase,
+      songsThisPhase: s.songsThisPhase,
+      songsOwned: s.songsOwned,
+    });
+    s.offers = rollOffers(pool, rng, LESSON_OFFERS);
+    addAssumption(s, TIER_GATE_SOURCE);
+    addAssumption(s, SONG_GATE_SOURCE);
+    addAssumption(s, OFFER_DRAW_SOURCE);
   }
 
   // -------------------------------------------------------------------------
@@ -327,15 +368,68 @@ export class GrandConcertScenario
     return out;
   }
 
+  /**
+   * What can be bought right now: the affordable subset of the three lessons on
+   * the board.
+   *
+   * NOT the affordable subset of the catalogue, which is what this returned
+   * until 2026-09-06 and which made every technique recommendation
+   * unactionable. `offersOnBoard()` exposes all three including the ones that
+   * cannot be paid for, because a UI has to show those too -- the game does,
+   * greyed, with the shortfall on the point bar.
+   */
   legalShopActions(state: GcRunState): ShopAction[] {
     const s = state.scenario;
     const out: ShopAction[] = [];
-    for (const t of this.dataset.techniques) {
-      if (canAfford(s.tokens, t.cost)) out.push({ kind: "technique", id: t.id });
+    for (const id of s.offers) {
+      const song = this.dataset.songs.find((x) => x.id === id);
+      if (song) {
+        if (s.songsOwned.includes(song.id)) continue;
+        if (canAfford(s.tokens, song.cost)) out.push({ kind: "song", id: song.id });
+        continue;
+      }
+      const tech = this.dataset.techniques.find((x) => x.id === id);
+      if (tech && canAfford(s.tokens, tech.cost)) {
+        out.push({ kind: "technique", id: tech.id });
+      }
     }
-    for (const song of this.dataset.songs) {
-      if (s.songsOwned.includes(song.id)) continue;
-      if (canAfford(s.tokens, song.cost)) out.push({ kind: "song", id: song.id });
+    return out;
+  }
+
+  /**
+   * The whole board, affordable or not, with what each costs and whether it can
+   * be paid for. What a lesson screen renders.
+   */
+  offersOnBoard(state: GcRunState): Array<{
+    action: ShopAction;
+    name: string | null;
+    effect: string | null;
+    cost: TokenVector;
+    affordable: boolean;
+  }> {
+    const s = state.scenario;
+    const out = [];
+    for (const id of s.offers) {
+      const song = this.dataset.songs.find((x) => x.id === id);
+      if (song) {
+        out.push({
+          action: { kind: "song", id: song.id },
+          name: song.name,
+          effect: song.mastery_bonus.text,
+          cost: song.cost,
+          affordable: canAfford(s.tokens, song.cost) && !s.songsOwned.includes(song.id),
+        });
+        continue;
+      }
+      const tech = this.dataset.techniques.find((x) => x.id === id);
+      if (!tech) continue;
+      out.push({
+        action: { kind: "technique", id: tech.id },
+        name: tech.name,
+        effect: tech.effect.text,
+        cost: tech.cost,
+        affordable: canAfford(s.tokens, tech.cost),
+      });
     }
     return out;
   }
@@ -470,10 +564,12 @@ export class GrandConcertScenario
     return next;
   }
 
-  buy(state: GcRunState, action: ShopAction): GcRunState {
+  buy(state: GcRunState, action: ShopAction, rng: Rng): GcRunState {
     const next = cloneState(state);
     const s = next.scenario;
 
+    // Buying anything redraws the board. That is the mechanic, and it is why
+    // this takes an rng: the shop is a stochastic transition, not a lookup.
     if (action.kind === "technique") {
       const tech = this.dataset.techniques.find((t) => t.id === action.id);
       if (!tech) throw new Error(`unknown technique ${action.id}`);
@@ -481,6 +577,7 @@ export class GrandConcertScenario
       s.tokens = subtractTokens(s.tokens, tech.cost);
       s.techniquesThisPhase += 1;
       s.techniquesTotal += 1;
+      this.rollBoard(next, rng);
       return next;
     }
 
@@ -490,6 +587,7 @@ export class GrandConcertScenario
     if (!canAfford(s.tokens, song.cost)) throw new Error(`cannot afford song ${action.id}`);
     s.tokens = subtractTokens(s.tokens, song.cost);
     s.songsOwned.push(song.id);
+    s.songsThisPhase += 1;
 
     // The Mastery Bonus applies immediately. Its per-training half is picked up
     // by songBonuses() on every subsequent training; the one-off half is granted
@@ -515,6 +613,7 @@ export class GrandConcertScenario
     for (const u of mastery.unparsed) {
       addAssumption(s, `unparsed song effect clause, contributing nothing: ${u}`);
     }
+    this.rollBoard(next, rng);
     if (song.concert_bonus_type !== null) {
       addAssumption(s,
         "Concert Bonus opcodes are NOT decoded -- master.mdb stores the type as an " +
@@ -825,7 +924,9 @@ export class GrandConcertScenario
 
     // Skill points paid out for everything bought since the last concert.
     state.skillPoints += s.techniquesThisPhase * 5;
+    // Both counters reset: the song unlock sequence starts again each phase.
     s.techniquesThisPhase = 0;
+    s.songsThisPhase = 0;
 
     const newCap = TOKEN_CAP_BASE + TOKEN_CAP_PER_CONCERT * s.concertsHeld;
     for (const t of TOKENS) s.tokenCaps[t] = newCap;
@@ -857,6 +958,7 @@ function cloneState(state: GcRunState): GcRunState {
       tokenCaps: { ...s.tokenCaps },
       songsOwned: [...s.songsOwned],
       concertBonusesActive: [...s.concertBonusesActive],
+      offers: [...s.offers],
       facilityLevels: { ...s.facilityLevels },
       cards: s.cards.map((c) => ({ ...c, effects: { ...c.effects } })),
       placement: {

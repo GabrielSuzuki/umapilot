@@ -277,7 +277,14 @@ export function beamSearch(
 
           if (b < opts.maxBuysPerTurn) {
             for (const buy of shopCandidates(scenario, node.state)) {
-              const next = scenario.buy(node.state, buy);
+              // Buying redraws the board, so it needs its own generator. Seeded
+              // from (depth, buys-so-far) rather than shared with the turn
+              // draws, so two candidate purchases at the same point face the
+              // same replacement board -- common random numbers again, applied
+              // to the shop.
+              const next = scenario.buy(
+                node.state, buy, mulberry32((drawSeed ^ ((b + 1) * 40503)) >>> 0),
+              );
               nodesExpanded++;
               bought.push({
                 state: next,

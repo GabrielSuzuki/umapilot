@@ -169,10 +169,18 @@ export interface Scenario<TScenarioState = unknown, TDataset = unknown> {
     rng: () => number,
   ): RunState<TScenarioState>;
 
-  /** Apply a shop purchase. Costs no turn. */
+  /**
+   * Apply a shop purchase. Costs no turn.
+   *
+   * Takes an rng because a purchase may change what the shop offers next --
+   * Grand Concert's board shows three lessons and buying one draws three more.
+   * That makes buying a stochastic transition, and a scenario whose shop
+   * refreshes cannot be reproduced from a seed without this.
+   */
   buy(
     state: RunState<TScenarioState>,
     action: ShopAction,
+    rng: Rng,
   ): RunState<TScenarioState>;
 
   isTerminal(state: RunState<TScenarioState>): boolean;

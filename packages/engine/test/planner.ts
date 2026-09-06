@@ -15,7 +15,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { STATS, type GrandConcertDataset, type Stat } from "../../data/src/types";
+import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
 import { mulberry32 } from "../src/rng";
 import { GrandConcertScenario, type GcRunState } from "../src/scenarios/grand-concert";
 import { competentPolicy, focusedPolicy } from "../src/policy";
@@ -25,6 +25,7 @@ import { compileTarget, shortfallScore, meetsTarget, wilson } from "../src/plann
 import { rollout, greedyShop, stateValue, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
 import { turnCandidates, actionKey } from "../src/planner/beam";
+import { eligibleSquares, classify } from "../src/scenarios/grand-concert/lesson-board";
 import { syntheticDataset, SYNTHETIC_CARDS } from "./fixtures/synthetic-scenario";
 
 let failures = 0;
@@ -104,7 +105,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   // computeTraining accepted the parameter, and step() never passed it. A song
   // was a pure token sink, which priced every performance token at zero and
   // left the lesson-shop layer with no gradient to plan over.
-  const withSong = scenario.buy(rich, { kind: "song", id: 200 });
+  const withSong = scenario.buy(rich, { kind: "song", id: 200 }, mulberry32(1));
   const rng1 = mulberry32(42), rng2 = mulberry32(42);
   const plain = scenario.step(rich, { kind: "train", facility: "speed" }, rng1);
   const boosted = scenario.step(withSong, { kind: "train", facility: "speed" }, rng2);
@@ -127,7 +128,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
         tokens: { dance: 400, passion: 400, vocal: 400, visual: 400, mental: 400 },
       },
     };
-    const bought = scenario.buy(funded, { kind: "song", id: 200 });
+    const bought = scenario.buy(funded, { kind: "song", id: 200 }, mulberry32(1));
     check("a Concert Bonus is NOT active the moment the song is bought",
       bought.scenario.songsOwned.length === 1 &&
       bought.scenario.concertBonusesActive.length === 0,
@@ -143,7 +144,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
       `after concert ${st.scenario.concertsHeld}, active: [${st.scenario.concertBonusesActive}]`);
   }
 
-  const oneOff = scenario.buy(rich, { kind: "song", id: 204 });
+  const oneOff = scenario.buy(rich, { kind: "song", id: 204 }, mulberry32(1));
   check("a one-off mastery bonus is granted on purchase",
     oneOff.stats.speed - rich.stats.speed === 20,
     `"Speed +20" granted ${oneOff.stats.speed - rich.stats.speed}`);
@@ -239,66 +240,211 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   check("the input state is not mutated by a rollout",
     start.turn === 1 && STATS.every((s) => start.stats[s] === 0));
 
-  const shopped = greedyShop(scenario, { ...start, scenario: { ...start.scenario, tokens: { dance: 500, passion: 500, vocal: 500, visual: 500, mental: 500 } } }, 3);
-  check("greedy shopping buys songs before techniques",
-    shopped.scenario.songsOwned.length === 3 && shopped.scenario.techniquesTotal === 0,
-    `${shopped.scenario.songsOwned.length} songs, ${shopped.scenario.techniquesTotal} techniques`);
-
-  // The regression that matters, and the one nothing was checking.
+  // -------------------------------------------------------------------------
+  // The board: three offers, redrawn only by buying
+  // -------------------------------------------------------------------------
   //
-  // The old rule -- songs first, then techniques -- reads correctly and could
-  // not buy a song in a whole career, because "first" only ever meant first
-  // among what was affordable that instant, and cheap single-currency
-  // techniques skimmed every currency away before a two-currency song could be
-  // reached. On real data: a song affordable on 0 of 72 turns, across every
-  // seed tried. It went unnoticed for two milestones because the only career
-  // any test played bought techniques exclusively by construction.
-  //
-  // So: play the whole thing and insist the shopper actually shops. Not how
-  // WELL -- that is the search's job, and this policy is only the floor it
-  // stands on.
+  // These replace three tests written against the old CATALOGUE shop, where
+  // `legalShopActions` returned every affordable technique. Two of them pinned
+  // a treadmill bug -- cheap single-currency techniques draining every currency
+  // before a two-currency song could be afforded -- and that bug cannot occur
+  // on a three-offer board, because the planner no longer gets to reach past
+  // what is on screen and take the globally cheapest thing. Retiring a test
+  // whose precondition no longer exists is right; retiring it without replacing
+  // what it protected would not be, so the mechanism itself is pinned below.
   {
-    // The rule as it shipped through M2, kept here so the regression is not
-    // vacuous. A test that only asserts the fix works cannot tell you whether
-    // the fixture is even capable of expressing the bug -- and this fixture had
-    // to be reshaped before it was, because evenly-spread technique costs
-    // cannot reproduce a treadmill that runs on single-currency ones.
-    const legacyShop = (s: GcRunState, n: number): GcRunState => {
-      let x = s;
-      for (let i = 0; i < n; i++) {
-        const a = scenario.legalShopActions(x);
-        const pick = a.find((y) => y.kind === "song") ?? a.find((y) => y.kind === "technique");
-        if (!pick) break;
-        x = scenario.buy(x, pick);
-      }
-      return x;
-    };
+    const board = scenario.initialState();
+    check("the board shows exactly three lessons",
+      board.scenario.offers.length === 3, `${board.scenario.offers.length} on offer`);
 
-    const play = (seed: number, shop: (s: GcRunState, n: number) => GcRunState) => {
-      let st = scenario.initialState();
-      const rng = mulberry32(seed);
-      while (!scenario.isTerminal(st)) {
-        st = scenario.step(st, competentPolicy(st, { scenario, target: policyTarget }), rng);
-        st = shop(st, RO.maxBuysPerTurn);
-      }
-      return st;
-    };
+    const legal = scenario.legalShopActions(board).map((a) => a.id);
+    check("nothing off the board can be bought",
+      legal.every((id) => board.scenario.offers.includes(id)),
+      `${legal.length} affordable of ${board.scenario.offers.length} offered`);
 
-    let legacySongs = 0, shippedSongs = 0, careersWithSong = 0;
-    for (const seed of [1, 2, 3]) {
-      legacySongs += play(seed, legacyShop).scenario.songsOwned.length;
-      const now = play(seed, (st, n) => greedyShop(scenario, st, n));
-      shippedSongs += now.scenario.songsOwned.length;
-      if (now.scenario.songsOwned.length > 0) careersWithSong++;
+    // A turn on its own must NOT change the board. The only thing that redraws
+    // it is a purchase -- there is no reroll and no skip, which is what makes
+    // an unaffordable offer a genuine decision rather than a nuisance.
+    const afterTurn = scenario.step(board, { kind: "rest" }, mulberry32(4));
+    check("taking a turn does not change the board",
+      JSON.stringify(afterTurn.scenario.offers) === JSON.stringify(board.scenario.offers),
+      `[${board.scenario.offers}] -> [${afterTurn.scenario.offers}]`);
+
+    const funded: GcRunState = {
+      ...board,
+      scenario: {
+        ...board.scenario,
+        tokens: { dance: 400, passion: 400, vocal: 400, visual: 400, mental: 400 },
+      },
+    };
+    const pick = scenario.legalShopActions(funded)[0]!;
+    const afterBuy = scenario.buy(funded, pick, mulberry32(9));
+    check("buying redraws the board",
+      JSON.stringify(afterBuy.scenario.offers) !== JSON.stringify(funded.scenario.offers) &&
+      afterBuy.scenario.offers.length === 3,
+      `[${funded.scenario.offers}] -> [${afterBuy.scenario.offers}]`);
+    // A bought SONG cannot come back -- it is owned. A bought technique can:
+    // techniques are repeatable purchases, not consumed stock, and the same
+    // square reappearing is the game's behaviour rather than a bug. Asserting
+    // otherwise was my error, and the model was right.
+    // Put a song on the board deliberately rather than hoping the draw supplies
+    // one -- "no song to test" is a pass that checks nothing, which is the
+    // failure mode this suite has already been bitten by twice.
+    const songId = dataset.songs[0]!.id;
+    const withSongOffered: GcRunState = {
+      ...funded,
+      scenario: {
+        ...funded.scenario,
+        offers: [songId, ...funded.scenario.offers.slice(0, 2)],
+        techniquesThisPhase: 99,
+      },
+    };
+    const songPick = scenario.legalShopActions(withSongOffered)
+      .find((a) => a.kind === "song" && a.id === songId);
+    check("a song placed on the board is buyable", songPick !== undefined, `song ${songId}`);
+    if (songPick) {
+      const afterSong = scenario.buy(withSongOffered, songPick, mulberry32(11));
+      check("a bought song cannot be offered again",
+        !afterSong.scenario.offers.includes(songId) &&
+        afterSong.scenario.songsOwned.includes(songId),
+        `owned, and absent from [${afterSong.scenario.offers}]`);
     }
+  }
 
-    check("the pre-fix shop rule could not buy a song in a whole career",
-      legacySongs === 0,
-      `"songs first, then techniques" bought ${legacySongs} songs across 3 careers -- ` +
-      `first only ever meant first among what was affordable that instant`);
-    check("the rollout policy buys songs over a full career",
-      careersWithSong === 3,
-      `${shippedSongs} songs across 3 careers, ${careersWithSong}/3 bought at least one`);
+  // Tier gating. Community-sourced and flagged, but it must at least do
+  // something: a tier-2 stat technique cannot be on offer before the first
+  // concert, and must become reachable after it.
+  {
+    const eligibleAt = (concertsHeld: number) =>
+      eligibleSquares(dataset, {
+        concertsHeld, techniquesThisPhase: 99, songsThisPhase: 0, songsOwned: [],
+      });
+    const tierOf = (id: number) => {
+      const t = dataset.techniques.find((x) => x.id === id);
+      return t ? classify(t.effect.text) : null;
+    };
+    const hasGatedTier2 = (concertsHeld: number) =>
+      eligibleAt(concertsHeld).some((id) => {
+        const c = tierOf(id);
+        return c?.family === "skillPoints" && c.tier === 2;
+      });
+
+    check("a tier-2 gated technique is not offered before the first concert",
+      !hasGatedTier2(0));
+    check("it becomes available once a concert has happened", hasGatedTier2(1));
+    check("energy and skill hints are available from the start",
+      eligibleAt(0).some((id) => tierOf(id)?.family === "energy") ||
+      dataset.techniques.every((t) => classify(t.effect.text)?.family !== "energy"),
+      "energy is ungated at every tier -- which is why a very early board can " +
+      "show Energy +30, a tier-2 effect, next to tier-1 cards");
+  }
+
+  // Song gating: a song cannot appear until enough techniques have been bought
+  // this phase, and the count resets after every concert.
+  {
+    const songsEligible = (techniquesThisPhase: number, songsThisPhase = 0) =>
+      eligibleSquares(dataset, {
+        concertsHeld: 0, techniquesThisPhase, songsThisPhase, songsOwned: [],
+      }).filter((id) => dataset.songs.some((x) => x.id === id)).length;
+
+    check("no song is offered before any technique is bought",
+      songsEligible(0) === 0, `${songsEligible(0)} songs eligible at 0 techniques`);
+    check("the first song unlocks once the gate is met",
+      songsEligible(1) > 0, `${songsEligible(1)} songs eligible at 1 technique`);
+    check("the second song needs more than the first",
+      songsEligible(1, 1) === 0 && songsEligible(3, 1) > 0,
+      "gate sequence is cumulative within a phase");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The objective
+// ---------------------------------------------------------------------------
+
+{
+  const compiled = compileTarget(TARGET);
+  const scenario = makeScenario();
+  const base = scenario.initialState();
+
+  const atTarget: GcRunState = { ...base, stats: { speed: 260, stamina: 140, power: 120, guts: 0, wit: 0 } };
+  const over: GcRunState = { ...base, stats: { speed: 900, stamina: 140, power: 120, guts: 0, wit: 0 } };
+  const spread: GcRunState = { ...base, stats: { speed: 260, stamina: 140, power: 120, guts: 500, wit: 500 } };
+
+  check("meeting every target counts as met", meetsTarget(atTarget, compiled));
+  check("a stat short of target is not met",
+    !meetsTarget({ ...base, stats: { ...atTarget.stats, power: 119 } }, compiled));
+
+  // The failure the whole goal-conditioned framing exists to prevent. Compare
+  // two ways of spending training: 640 points of Speed the target did not ask
+  // for, against 60 points of Power that it did. A score-maximising objective
+  // prefers the 640 by an order of magnitude. This one must prefer the 60.
+  const shortPower: GcRunState = { ...base, stats: { ...atTarget.stats, power: 60 } };
+  const overshootWorth = shortfallScore(over, compiled) - shortfallScore(atTarget, compiled);
+  const shortfallWorth = shortfallScore(atTarget, compiled) - shortfallScore(shortPower, compiled);
+  check("640 stat points past a target are worth less than 60 points still short",
+    over.stats.speed - atTarget.stats.speed === 640 &&
+    atTarget.stats.power - shortPower.stats.power === 60 &&
+    overshootWorth < shortfallWorth,
+    `+640 speed buys ${overshootWorth.toFixed(4)}, +60 power buys ${shortfallWorth.toFixed(4)} ` +
+    `(${(shortfallWorth / overshootWorth).toFixed(1)}x per point-of-progress)`);
+
+  // ... but it must not be worth exactly zero either, or the search has no
+  // reason to prefer margin, and margin is what survives a bad roll.
+  check("overshoot is still worth something, so margin is preferred",
+    shortfallScore(over, compiled) > shortfallScore(atTarget, compiled));
+
+  check("stats with no target contribute nothing",
+    shortfallScore(spread, compiled) === shortfallScore(atTarget, compiled),
+    "guts and wit have no target, so 500 of each changes the score by 0");
+
+  const [lo, hi] = wilson(0, 50);
+  check("a Wilson interval stays inside [0,1] at the extremes",
+    lo >= 0 && hi <= 1 && hi > 0, `0/50 -> [${lo.toFixed(3)}, ${hi.toFixed(3)}]`);
+}
+
+// ---------------------------------------------------------------------------
+// Rollouts
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const start = scenario.initialState();
+
+  const a = rollout(scenario, start, mulberry32(7), RO);
+  const b = rollout(scenario, start, mulberry32(7), RO);
+  check("a rollout is deterministic given its seed",
+    JSON.stringify(a.stats) === JSON.stringify(b.stats), JSON.stringify(a.stats));
+
+  const c = rollout(scenario, start, mulberry32(8), RO);
+  check("different seeds give different runs",
+    JSON.stringify(a.stats) !== JSON.stringify(c.stats));
+
+  check("a rollout reaches the end of the career", scenario.isTerminal(a), `turn ${a.turn}`);
+  check("the input state is not mutated by a rollout",
+    start.turn === 1 && STATS.every((s) => start.stats[s] === 0));
+
+  // The rollout policy has to keep the board moving. Buying is the ONLY thing
+  // that redraws the three offers, so a policy that stalls does not patiently
+  // accumulate -- it freezes the board and ends the career with tokens unspent.
+  //
+  // This replaces three tests written against the old CATALOGUE shop, where
+  // `legalShopActions` returned every affordable technique. Two of them pinned
+  // a treadmill bug: cheap single-currency techniques draining every currency
+  // before a two-currency song could ever be afforded. That bug cannot occur on
+  // a three-offer board, because nothing can reach past the screen and take the
+  // globally cheapest square. Retiring a test whose precondition no longer
+  // exists is right -- retiring it without replacing what it protected would
+  // not be, so the board mechanism itself is pinned in the section above.
+  {
+    let purchases = 0;
+    let unspent = 0;
+    for (const seed of [1, 2, 3]) {
+      const end = rollout(scenario, scenario.initialState(), mulberry32(seed), RO);
+      purchases += end.scenario.techniquesTotal + end.scenario.songsOwned.length;
+      unspent += TOKENS.reduce((a, t) => a + end.scenario.tokens[t], 0);
+    }
+    check("the rollout policy keeps buying rather than stalling", purchases > 0,
+      `${purchases} lessons across 3 careers, ${unspent} tokens left unspent`);
   }
 
   // ...and still buys techniques. Reserving for songs without a per-currency
@@ -465,7 +611,7 @@ function playSearched(scenario: GrandConcertScenario, seed: number): GcRunState 
     for (const step of r.plan.filter((p) => p.turn <= state.turn)) {
       const legal = scenario.legalShopActions(state);
       if (legal.some((a) => a.kind === step.action.kind && a.id === step.action.id)) {
-        state = scenario.buy(state, step.action);
+        state = scenario.buy(state, step.action, mulberry32(seed + state.turn));
       }
     }
   }

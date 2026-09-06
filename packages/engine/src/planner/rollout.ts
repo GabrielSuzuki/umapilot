@@ -130,6 +130,7 @@ export function greedyShop(
   scenario: GrandConcertScenario,
   state: GcRunState,
   maxBuys: number,
+  rng: Rng,
 ): GcRunState {
   const index = costIndex(scenario);
   let next = state;
@@ -138,21 +139,52 @@ export function greedyShop(
     const actions = scenario.legalShopActions(next);
 
     const song = actions.find((a) => a.kind === "song");
-    if (song) { next = scenario.buy(next, song); continue; }
+    if (song) { next = scenario.buy(next, song, rng); continue; }
 
+    // Reserve for a song ON THE BOARD, not for the cheapest in the catalogue.
+    //
+    // Before the board was modelled, reserving against the catalogue was right:
+    // every song was permanently purchasable, so saving for the cheapest one
+    // always had a target. With three rotating offers it deadlocks -- the rule
+    // holds tokens back for a song that is not on screen and may not be for
+    // many turns, refuses every technique in the meantime, and buys nothing at
+    // all. Measured: one song across three careers, down from five.
+    //
+    // Reserving against the board is also the more faithful rule, because the
+    // game lets you SCHEDULE an offer you cannot yet afford and shows the
+    // shortfall on the point bar. Saving for something you can see is exactly
+    // the mechanic; saving for something you cannot is just paralysis.
     const owned = next.scenario.songsOwned;
-    const reserve = index.songsByCost.find((s) => !owned.includes(s.id))?.cost;
+    const onBoard = next.scenario.offers;
+    const reserve = index.songsByCost
+      .find((s) => onBoard.includes(s.id) && !owned.includes(s.id))?.cost;
     const have = next.scenario.tokens;
 
-    const tech = actions.find((a) => {
-      if (a.kind !== "technique") return false;
+    const techniques = actions.filter((a) => a.kind === "technique");
+    if (techniques.length === 0) break;
+
+    const withinReserve = techniques.find((a) => {
       if (!reserve) return true;
       const cost = index.technique.get(a.id);
       if (!cost) return false;
       return TOKENS.every((c) => cost[c] <= Math.max(0, have[c] - reserve[c]));
     });
-    if (!tech) break;
-    next = scenario.buy(next, tech);
+
+    // Never stall. If the reserve blocks everything on the board, buy anyway.
+    //
+    // This is not a softening of the rule, it is the rule finally meeting the
+    // board. Buying is the ONLY thing that redraws the three offers, so a
+    // policy that refuses every option does not patiently accumulate tokens --
+    // it freezes the board on the song it is saving for and stops the career.
+    // Measured on the fixture: zero songs bought and 76 Composure unspent at
+    // turn 72, while a song sat on the board unaffordable in a currency the run
+    // never generated.
+    //
+    // Saving for something you can see is the mechanic; refusing to act until
+    // it arrives is paralysis, and it is strictly worse than buying the
+    // technique and taking a fresh board.
+    const tech = withinReserve ?? techniques[0]!;
+    next = scenario.buy(next, tech, rng);
   }
   return next;
 }
@@ -172,7 +204,7 @@ export function rollout(
     if (opts.truncateAfter > 0 && played >= opts.truncateAfter) break;
     const action = opts.policy(cur, { scenario, target: opts.policyTarget });
     cur = scenario.step(cur, action, rng);
-    cur = greedyShop(scenario, cur, opts.maxBuysPerTurn);
+    cur = greedyShop(scenario, cur, opts.maxBuysPerTurn, rng);
     played++;
   }
   return cur;
@@ -213,7 +245,7 @@ export function rolloutTrace(
       const pick = actions.find((a) => a.kind === "song") ?? actions.find((a) => a.kind === "technique");
       if (!pick) break;
       buys.push({ turn: cur.turn, action: pick });
-      cur = scenario.buy(cur, pick);
+      cur = scenario.buy(cur, pick, rng);
     }
     played++;
   }

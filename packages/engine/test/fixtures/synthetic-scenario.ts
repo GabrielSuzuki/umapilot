@@ -74,6 +74,21 @@ export function syntheticDataset(): GrandConcertDataset {
   // spread technique costs cannot reproduce that, and a fixture that cannot
   // reproduce it makes the regression below vacuous.
   const CURRENCIES = ["dance", "passion", "vocal", "visual", "mental"] as const;
+  // Three tiers of a GATED family, plus ungated energy and hints, because the
+  // tier gate is the thing under test and a fixture where every technique is
+  // tier 1 cannot express it. The effect wording is the game's real grammar --
+  // the engine classifies by text, so text that does not parse would exercise
+  // none of the gating path.
+  const techniqueEffects = [
+    "Skill Pts +5", "Skill Pts +8", "Skill Pts +12",
+    "Speed +5", "Speed +8", "Speed +12",
+    "Guts +5", "Guts +8",
+    "Energy +20", "Energy +30", "Energy +40",
+    "Skill Hint Lvl +1 (Sprint)", "Skill Hint Lvl +2 (Sprint)",
+    "Wit +5", "Wit +8",
+    "Stamina +5", "Stamina +8",
+    "Power +5", "Power +8", "Power +12",
+  ];
   const techniques = Array.from({ length: 20 }, (_, i) => {
     const cost = tokens();
     cost[CURRENCIES[i % 5]!] = 8 + (i % 4) * 3;
@@ -82,7 +97,7 @@ export function syntheticDataset(): GrandConcertDataset {
       name: `Synthetic Technique ${i + 1}`,
       kind: "technique_stat" as const,
       cost,
-      effect: { text: "Skill Pts +5", raw: [] },
+      effect: { text: techniqueEffects[i] ?? "Skill Pts +5", raw: [] },
     };
   });
 
