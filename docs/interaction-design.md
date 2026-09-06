@@ -122,9 +122,38 @@ than a scoring heuristic.
 
 **This is the load-bearing reason M3 is a beam search and not a formula.**
 
-### Recreation destinations are not interchangeable
+### Recreation is a choice of companion, not of venue
 
-`master.mdb` names them, and their payoffs differ enough to matter:
+An earlier draft of this document had it wrong. The Recreation screen offers the
+**trainee alone or a friend support card** — the venue is the game's choice, not
+the player's.
+
+Going with a friend advances that card's **event chain**, shown as chevrons
+("Event Progress"). Every friend in `master.mdb` has one:
+
+| friend | steps |
+|---|---:|
+| Tazuna Hayakawa | 5 |
+| Aoi Kiryuin | 5 |
+| Riko Kashimoto | 5 |
+| Light Hello | 5 |
+| **Sasami Anshinzawa** | **3** |
+
+**They are not all the same length.** A planner that assumes five would over-book
+two turns on a Sasami run.
+
+This is a **deadline-constrained scheduling problem**, structurally identical to
+the song unlock gates: five outings must fit somewhere in 72 turns, each one
+displaces a training, and the payoff only lands when the chain completes. It is
+precisely the case a myopic recommender gets wrong — a single friend outing looks
+like a wasted turn right up until the chain pays out.
+
+So the engine tracks progress per friend and exposes `friendChainStatus()`,
+which reports remaining steps against turns left and flags a chain that has
+become infeasible. A planner has to *reserve* those turns, not discover at turn
+68 that it owes four outings it can no longer afford.
+
+The venue still matters for the immediate payoff, and `master.mdb` names them:
 
 | destination | energy | mood |
 |---|---:|---:|
@@ -133,9 +162,9 @@ than a scoring heuristic.
 | Shrine | +30 / +20 / +10 | +1 |
 | Beach | +40 | +1 |
 
-The game decides which is offered, so the app ranks what is on screen rather than
-choosing freely. But "go to Karaoke" and "go to the Beach" are different
-decisions and the advice should say which.
+Per-step chain **rewards** are not in `master.mdb` — like all event outcomes they
+live in the story assets (see `events.md`). The structure is extracted, which is
+what the scheduler needs; the payouts are flagged as unmodelled.
 
 ### What is still missing for races
 

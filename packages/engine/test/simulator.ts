@@ -248,6 +248,53 @@ check("an interpolated level sits between the two known ones",
 }
 
 // ---------------------------------------------------------------------------
+// Friend outing chains
+// ---------------------------------------------------------------------------
+
+{
+  const chains = (dataset as unknown as {
+    friendEvents: Array<{ charaId: number; totalSteps: number }>;
+  }).friendEvents;
+
+  check("friend outing chains are extracted", chains?.length === 5, `${chains?.length}`);
+  check("chain lengths are not uniform -- Sasami has 3 where others have 5",
+    chains.some((c) => c.totalSteps === 3) && chains.some((c) => c.totalSteps === 5),
+    chains.map((c) => c.totalSteps).join(","));
+
+  const scenario = makeScenario();
+  let state = scenario.initialState();
+  const lightHello = 9008;
+
+  const before = scenario.friendChainStatus(state).find((f) => f.charaId === lightHello)!;
+  check("a chain starts at zero and is feasible at turn 1",
+    before.done === 0 && before.remaining === 5 && before.feasible);
+
+  const rng = mulberry32(3);
+  state = scenario.step(state, { kind: "recreation", companionCharaId: lightHello }, rng);
+  const after = scenario.friendChainStatus(state).find((f) => f.charaId === lightHello)!;
+  check("an outing with a friend advances that friend's chain",
+    after.done === 1 && after.remaining === 4);
+
+  const solo = scenario.step(state, { kind: "recreation" }, rng);
+  check("a solo recreation advances no chain",
+    (solo.scenario.friendEventProgress[lightHello] ?? 0) === 1);
+
+  // Over-advancing must not run past the end of the chain.
+  let s2 = state;
+  for (let i = 0; i < 10; i++) {
+    s2 = scenario.step(s2, { kind: "recreation", companionCharaId: lightHello }, rng);
+  }
+  check("a chain cannot advance past its length",
+    (s2.scenario.friendEventProgress[lightHello] ?? 0) === 5);
+
+  // Feasibility is the point: it has to go false when the turns run out.
+  const late = { ...state, turn: dataset.constants.careerTurns };
+  const lateStatus = scenario.friendChainStatus(late).find((f) => f.charaId === lightHello)!;
+  check("an unfinished chain is flagged infeasible when turns run out",
+    !lateStatus.feasible, `${lateStatus.remaining} left, ${lateStatus.turnsLeft} turns`);
+}
+
+// ---------------------------------------------------------------------------
 // Golden file
 // ---------------------------------------------------------------------------
 

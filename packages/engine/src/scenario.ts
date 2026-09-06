@@ -33,13 +33,22 @@ export type TurnAction =
   | { kind: "rest" }
   | { kind: "infirmary" }
   /**
-   * Recreation. `destination` is one of the named spots from master.mdb --
-   * Riverside, Karaoke, Shrine, Beach -- which differ materially: Beach gives
-   * +40 energy and +1 mood, Karaoke gives +2 mood and no energy. Which is
-   * offered is decided by the game, so a recommender ranks what is on screen
-   * rather than choosing freely.
+   * Recreation. The screen offers a choice of COMPANION, not of venue: the
+   * trainee alone, or a friend support card.
+   *
+   * Going with a friend advances that card's bounded event chain (the "Event
+   * Progress" chevrons -- 5 steps for most, 3 for Sasami Anshinzawa). Finishing
+   * the chain before the career ends is a real objective, and each step costs a
+   * turn that could have been a training. That makes it a deadline-constrained
+   * scheduling problem, the same shape as the song unlock gates -- and exactly
+   * the kind of thing a myopic recommender gets wrong, because a single outing
+   * looks like a wasted turn right up until the chain pays out.
+   *
+   * `companionCharaId` names the friend; omitted means the solo option.
+   * `destination` is the venue the game picks (Riverside / Karaoke / Shrine /
+   * Beach), which determines the energy and mood payoff.
    */
-  | { kind: "recreation"; destination?: string }
+  | { kind: "recreation"; companionCharaId?: number; destination?: string }
   | { kind: "race"; raceId?: number };
 
 /**

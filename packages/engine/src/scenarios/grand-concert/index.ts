@@ -56,6 +56,14 @@ export interface GrandConcertState {
   /** Which cards are on which facility this turn. Re-rolled at the start of each turn. */
   placement: Record<Stat, number[]>;
   growthRate: Partial<Record<Stat, number>>;
+  /**
+   * Friend outing chain progress, keyed by the friend's chara id.
+   *
+   * Deadline-constrained: the remaining steps have to fit in the turns left, and
+   * each one displaces a training. The planner has to reserve those turns rather
+   * than discover at turn 68 that it needs four more outings.
+   */
+  friendEventProgress: Record<number, number>;
   /** Everything the projection rests on that has not been verified. */
   assumptions: string[];
 }
@@ -89,6 +97,7 @@ export class GrandConcertScenario
 
   private readonly facilityTable: FacilityTable;
   private readonly failureRateBase: Record<string, Record<string, number>>;
+  private readonly friendChains: Array<{ charaId: number; totalSteps: number }>;
   private readonly otherCommands: Record<string, {
     name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
   }>;
@@ -115,6 +124,9 @@ export class GrandConcertScenario
     this.facilityTable = training.facilities;
     this.failureRateBase = training.failureRateBase ?? {};
     this.otherCommands = training.otherCommands ?? {};
+    this.friendChains =
+      (dataset as unknown as { friendEvents?: Array<{ charaId: number; totalSteps: number }> })
+        .friendEvents ?? [];
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
   }
 
@@ -153,6 +165,9 @@ export class GrandConcertScenario
         })),
         placement: { speed: [], stamina: [], power: [], guts: [], wit: [] },
         growthRate: this.setup.growthRate ?? {},
+        friendEventProgress: Object.fromEntries(
+          this.friendChains.map((f) => [f.charaId, 0]),
+        ),
         assumptions: [],
       },
     };
@@ -251,6 +266,20 @@ export class GrandConcertScenario
         if (!action.destination) {
           addAssumption(s, "recreation destination not specified -- averaged across " +
             "the destinations master.mdb offers, which range from +0 to +40 energy");
+        }
+
+        // Going with a friend advances their chain.
+        if (action.companionCharaId !== undefined) {
+          const chain = this.friendChains.find((f) => f.charaId === action.companionCharaId);
+          if (chain) {
+            const now = s.friendEventProgress[chain.charaId] ?? 0;
+            if (now < chain.totalSteps) {
+              s.friendEventProgress[chain.charaId] = now + 1;
+              addAssumption(s,
+                "friend outing chain rewards are not modelled -- the step is " +
+                "tracked, but its payout lives in the story assets, not master.mdb");
+            }
+          }
         }
         break;
       }
@@ -413,6 +442,26 @@ export class GrandConcertScenario
     return variants[Math.floor(rng() * variants.length)]!;
   }
 
+  /**
+   * Friend chain steps still outstanding, and whether they still fit.
+   *
+   * Surfaced so a planner can reserve turns rather than discover at turn 68 that
+   * it owes four outings it can no longer afford.
+   */
+  friendChainStatus(state: GcRunState): Array<{
+    charaId: number; done: number; total: number; remaining: number; turnsLeft: number; feasible: boolean;
+  }> {
+    const turnsLeft = this.dataset.constants.careerTurns - state.turn + 1;
+    return this.friendChains.map((f) => {
+      const done = state.scenario.friendEventProgress[f.charaId] ?? 0;
+      const remaining = Math.max(0, f.totalSteps - done);
+      return {
+        charaId: f.charaId, done, total: f.totalSteps, remaining, turnsLeft,
+        feasible: remaining <= turnsLeft,
+      };
+    });
+  }
+
   private growBonds(s: GrandConcertState, facility: Stat): void {
     for (const idx of s.placement[facility]) {
       const card = s.cards[idx]!;
@@ -477,6 +526,7 @@ function cloneState(state: GcRunState): GcRunState {
       },
       facilityUses: { ...s.facilityUses },
       growthRate: { ...s.growthRate },
+      friendEventProgress: { ...s.friendEventProgress },
       assumptions: [...s.assumptions],
     },
   };

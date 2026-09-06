@@ -593,6 +593,56 @@ class Extractor:
                     "interpolate silently.",
         }
 
+    def friend_events(self) -> list[dict]:
+        """Friend outing chains.
+
+        Recreation is a choice of COMPANION, not of venue: the screen offers the
+        trainee or a friend support card, and going with a friend advances a
+        bounded event chain shown as chevrons ("Event Progress"). Completing the
+        chain before the career ends is a real objective, and each step costs a
+        turn that could have been a training -- so it is a deadline-constrained
+        scheduling problem, the same shape as the song unlock gates.
+
+        Chain length is NOT uniform: Sasami Anshinzawa has three steps where the
+        others have five. A planner that assumes five would over-book two turns.
+
+        The per-step REWARDS are not here -- like all event outcomes they live in
+        the story assets (see events.md). What is extractable is the structure,
+        which is what the scheduler actually needs.
+        """
+        chains: dict[int, dict] = {}
+        for chara_id, step, total in self.db.execute(
+            "SELECT support_chara_id, show_progress_1, show_progress_2 "
+            "FROM single_mode_story_data "
+            "WHERE show_progress_2 > 0 AND support_chara_id > 0 "
+            "GROUP BY support_chara_id, show_progress_1, show_progress_2 "
+            "ORDER BY support_chara_id, show_progress_1"
+        ):
+            entry = chains.setdefault(chara_id, {
+                "charaId": chara_id, "steps": [], "totalSteps": total,
+            })
+            entry["steps"].append(step)
+            if total != entry["totalSteps"]:
+                die(f"friend chara {chara_id} reports inconsistent chain lengths "
+                    f"({total} vs {entry['totalSteps']})")
+
+        out = []
+        for chara_id, entry in sorted(chains.items()):
+            cards = [
+                {"id": cid, "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, cid))}
+                for (cid,) in self.db.execute(
+                    "SELECT id FROM support_card_data WHERE chara_id=? ORDER BY id",
+                    (chara_id,))
+            ]
+            out.append({
+                **entry,
+                "steps": sorted(set(entry["steps"])),
+                "cards": cards,
+                "rewardsKnown": False,
+                "note": "per-step rewards live in the story assets, not master.mdb",
+            })
+        return out
+
     def sparks(self) -> dict:
         """Succession factors -- the sparks that drive the three inspirations.
 
@@ -828,6 +878,7 @@ def main() -> None:
     ])
 
     techniques = ex.techniques()
+    friends = ex.friend_events()
     songs = ex.songs()
     concerts = ex.concerts()
 
@@ -859,6 +910,7 @@ def main() -> None:
             "careerTurns": max(c.turn for c in concerts),
         },
         "training": training,
+        "friendEvents": friends,
         "concerts": [asdict(c) for c in concerts],
         "techniques": [asdict(t) for t in techniques],
         "songs": [asdict(s) for s in songs],
