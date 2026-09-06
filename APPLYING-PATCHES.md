@@ -141,3 +141,30 @@ These are specific to PowerShell and have all bitten us at least once.
 
 - `PUSH.md` — first-time GitHub setup and the pre-push safety check.
 - `CONTRIBUTING.md` — the one rule: don't write a guess into the dataset.
+
+---
+
+## PowerShell notes
+
+Commands in this repo's docs are written for bash unless they say otherwise.
+Two that bite on PowerShell:
+
+**Setting an environment variable for one command.** `VAR=1 some-command` is
+bash only. PowerShell needs `$env:VAR = 1` on its own line -- and that sets it
+for the whole shell session, so it has to be unset again or it silently affects
+every later command in that window.
+
+The golden-file update is the case where that actually costs something: leave
+`UPDATE_GOLDEN` set and every subsequent `npm test` rewrites the regression
+baseline instead of checking against it, so the test goes green forever and
+tells you nothing. Use the script instead, which carries a flag rather than an
+environment variable and cannot leak:
+
+```
+npm run golden
+```
+
+**Chaining.** `&&` works in PowerShell 7+ but not in Windows PowerShell 5.1,
+where the separator is `;` -- and `;` runs the second command even if the first
+failed, which is not what `&&` means. Run them on separate lines when it
+matters.

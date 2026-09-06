@@ -637,14 +637,24 @@ check("an interpolated level sits between the two known ones",
   };
   const digest = createHash("sha256").update(JSON.stringify(summary)).digest("hex").slice(0, 16);
 
-  if (!existsSync(GOLDEN) || process.env.UPDATE_GOLDEN) {
+  // Both spellings, because an env var is a cross-platform trap here. Setting
+  // UPDATE_GOLDEN=1 inline works on bash; the PowerShell equivalent
+  // ($env:UPDATE_GOLDEN=1) sets it for the whole SHELL SESSION, so if it is not
+  // unset afterwards every later `npm test` silently rewrites the golden file
+  // instead of checking it -- the regression stops existing and nothing says
+  // so. A flag cannot leak past the command that carries it.
+  const updateRequested =
+    process.env.UPDATE_GOLDEN !== undefined || process.argv.includes("--update-golden");
+
+  if (!existsSync(GOLDEN) || updateRequested) {
     writeFileSync(GOLDEN, JSON.stringify({ digest, summary }, null, 2) + "\n");
     console.log(`  ..  golden file ${existsSync(GOLDEN) ? "updated" : "created"} (${digest})`);
   } else {
     const golden = JSON.parse(readFileSync(GOLDEN, "utf8"));
     check("golden career matches", golden.digest === digest,
       golden.digest === digest ? digest
-        : `expected ${golden.digest}, got ${digest} -- if the model changed on purpose, re-run with UPDATE_GOLDEN=1`);
+        : `expected ${golden.digest}, got ${digest} -- if the model changed on ` +
+          `purpose, read the diff and then re-pin with \`npm run golden\``);
   }
   console.log(`\n  final: ${JSON.stringify(summary.stats)}  SP ${summary.skillPoints}`);
   console.log(`  assumptions carried: ${state.scenario.assumptions.length}`);
