@@ -9,13 +9,17 @@ with the reasoning shown.
 Currently targets the **Grand Concert** (Grand Live) scenario on the global
 version. Web-only, no install, nothing that touches the game.
 
-> Status: **M2 tooling built.** The forward simulator runs and is reproducible
-> from a seed, but projects roughly 2-3x below real runs
-> ([docs/m1-status.md](docs/m1-status.md)). The calibration tools that fix that
-> are in place and tested against planted bugs — they now need real observations.
-> [docs/m2-logging.md](docs/m2-logging.md) says what to capture: screenshots of
-> the training screen, which shows the game's own predicted gains for all five
-> facilities at once. Do not build a recommendation UI until this is calibrated.
+> Status: **M3 engine built, no UI yet.** The recommender is in: one beam search
+> over both decision layers, resources priced by measurement rather than by
+> chosen weights, and every number reported with the spread it was measured at.
+> See [docs/m3-planner.md](docs/m3-planner.md). It runs headless
+> (`npm run plan -- --state examples/run.json`) and beats the heuristic policy it
+> falls back on, on paired seeds.
+>
+> What it is **not** is validated against the game. The simulator underneath is
+> calibrated on one logged run, and the ranking is a hypothesis about that model
+> rather than a measurement of Umamusume — every result says so.
+> [docs/m2-logging.md](docs/m2-logging.md) says what to capture to change that.
 
 Before a run you scan two screens (Support Formation and Legacy Select) and the
 tool reads your six support cards, your legacy setup, and the stat caps that
@@ -66,7 +70,8 @@ reported as a probability with an interval rather than a score.
 tools/extract/          master.mdb -> versioned JSON (Python, build-time only)
 packages/data/          schema, generated datasets, shared TypeScript types
 packages/engine/        scenario interface, simulator, recommender  [M1+]
-packages/web/           the app                                      [M3]
+packages/engine/src/planner/   beam search, objectives, shadow prices [M3]
+packages/web/           the app                                      [M3b]
 ```
 
 The engine never imports the UI or the extractor. It should always be runnable
@@ -159,10 +164,13 @@ cannot tell — so it gets two seconds of confirmation instead.
 | M1 | Forward simulator, pure and seeded; CLI; 33 tests | 🟡 built, uncalibrated |
 | M1b | Validate against logged runs; decode spark and support-effect opcodes | |
 | M2 | Calibration: training-screen log, residual diagnostics, base-value solver | 🟡 tooling built, awaiting real data |
-| M3 | Lesson/song beam-search planner + web UI + pre-run scan | |
-| M3b | Per-turn advice via continuous browser screen capture — see [docs/interaction-design.md](docs/interaction-design.md) | |
-| M4 | Goal probability with confidence intervals | |
-| M5 | Turn recommender using the planner's shadow prices | |
+| **M3** | Beam-search planner over turn actions *and* purchases; measured shadow prices; goal probability with intervals; headless CLI — [docs/m3-planner.md](docs/m3-planner.md) | 🟡 engine built, unvalidated |
+| M3a | Decode the Concert Bonus opcodes — the largest remaining gap in what a purchase is worth | |
+| M3b | Web UI, manual entry, over the same `plan()` the CLI calls | |
+| M3c | Pre-run scan — see [docs/scan-spec.md](docs/scan-spec.md) | |
+| M3d | Per-turn advice via continuous browser screen capture — see [docs/interaction-design.md](docs/interaction-design.md) | |
+| M4 | Validate the search against a logged real career | |
+| M5 | Skill wishlist priced in bashin gain via [uma-skill-tools] | |
 
 ---
 

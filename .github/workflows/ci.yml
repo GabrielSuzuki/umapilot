@@ -62,11 +62,16 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      # Both suites skip themselves when no dataset is present, which is always
+      # These three skip themselves when no dataset is present, which is always
       # true on a runner -- the dataset is generated from a local game install.
+      # So until the planner suite existed, this job asserted nothing at all.
       - run: npx tsx packages/engine/test/smoke.ts
       - run: npx tsx packages/engine/test/simulator.ts
       - run: npx tsx packages/engine/test/calibration.ts
+      # This one runs everywhere: it uses a synthetic fixture and asserts
+      # properties of the SEARCH, not facts about the game. See
+      # docs/m3-planner.md for why that is not a guess in the dataset.
+      - run: npx tsx packages/engine/test/planner.ts
 
   # The one security control this project actually needs enforced: the player's
   # game data and identity must never enter the repo. .gitignore covers it, but
