@@ -106,6 +106,16 @@ export interface TrainingInput {
    */
   songBonuses?: Partial<Record<Stat, number>>;
   songSkillPointBonus?: number;
+  /**
+   * Total "Friendship Training Effectiveness +N%" from Concert Bonuses that are
+   * already running, in percentage points.
+   *
+   * Applied as a multiplier on the friendship term rather than added to each
+   * card's own bonus. The game's wording says what it boosts, not how it
+   * composes; the two readings diverge once more than one card contributes, and
+   * a logged run separates them. Flagged in every projection until then.
+   */
+  concertFriendshipBonus?: number;
   facilityLevel: number;
   mood: Mood;
   /** Trainee growth rate for this stat, as a percentage (e.g. 10 for +10%). */
@@ -286,7 +296,7 @@ export function computeTraining(input: TrainingInput): TrainingResult {
   const {
     facility, facilityLevel, mood, growthRate, cards,
     facilityTable, statCaps, currentStats,
-    songBonuses = {}, songSkillPointBonus = 0,
+    songBonuses = {}, songSkillPointBonus = 0, concertFriendshipBonus = 0,
   } = input;
 
   const assumptions: string[] = [
@@ -351,6 +361,15 @@ export function computeTraining(input: TrainingInput): TrainingResult {
     if (cardKind(card) === "group") groupFriendshipUsed = true;
   }
   if (groupFriendshipUsed) assumptions.push(GROUP_FRIENDSHIP_ASSUMPTION);
+
+  // A song's Concert Bonus scales the friendship term, and only while at least
+  // one card is actually contributing friendship -- a bonus to "friendship
+  // training" with no friendship training to boost is worth nothing, and
+  // applying it anyway would quietly inflate every non-friendship training in
+  // the run.
+  if (concertFriendshipBonus > 0 && friendship > 1) {
+    friendship *= 1 + concertFriendshipBonus / 100;
+  }
 
   // --- term 3: mood --------------------------------------------------------
   let moodEffectSum = 0;

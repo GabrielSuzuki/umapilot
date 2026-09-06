@@ -59,7 +59,22 @@ export interface Song {
   cost: TokenVector;
   /** Applies immediately on purchase. */
   mastery_bonus: Effect;
-  /** Applies from the next concert until the end of the career. */
+  /**
+   * Applies from the NEXT concert until the end of the career -- not on
+   * purchase. That timing is the whole reason song ordering matters: a bonus
+   * bought before Classic June multiplies every remaining training, the same
+   * bonus bought in Senior November multiplies almost none.
+   *
+   * The game ships the wording (text_data category 208, keyed by
+   * `single_mode_live_song_list.id`), so this is READ, not decoded. Before
+   * 2026-09-06 only the opcode below was extracted and nothing applied it.
+   */
+  concert_bonus: Effect;
+  /**
+   * The raw opcode behind `concert_bonus`. Kept only so a future extraction can
+   * check the wording still matches the type it claims to describe. Nothing
+   * derives behaviour from it.
+   */
   concert_bonus_type: number | null;
   concert_bonus_value: number | null;
   live_id: number | null;

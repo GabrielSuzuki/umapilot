@@ -211,11 +211,13 @@ export function plan(
     ...state.scenario.assumptions,
     `search looks ${beamOpts.horizon} turns ahead; beyond that the run is played ` +
       `by a heuristic policy, so long-horizon value is estimated rather than searched`,
-    `a song's Mastery Bonus is decoded from the game's own text and applied, but ` +
-      `its Concert Bonus is an undecoded opcode and is NOT -- so every song is ` +
-      `valued below what it is worth, and songs bought early are undervalued most, ` +
-      `because the Concert Bonus is precisely the part whose worth scales with ` +
-      `turns remaining. This is the largest known gap in this ranking.`,
+    `both halves of a song are now read from the game's own text: the Mastery ` +
+      `Bonus on purchase, and the Concert Bonus from the next concert onward. ` +
+      `Of the three Concert Bonus kinds only "Friendship Training Effectiveness" ` +
+      `is applied -- "Support Chain Event Frequency" raises how often support ` +
+      `events fire, and event outcomes are not in master.mdb at all, while ` +
+      `"Speciality Priority Up" is race-side. Songs carrying those two are still ` +
+      `valued below what they are worth.`,
     ...(beamOpts.companions.length === 0
       ? ["no companions were declared, so recreation is scored as a solo outing " +
          "and no friend-chain deadline is scheduled"]

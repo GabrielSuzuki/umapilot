@@ -114,6 +114,35 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
     `+${plain.stats.speed - rich.stats.speed} without, ` +
     `+${boosted.stats.speed - withSong.stats.speed} with "Training Speed Gain +1"`);
 
+  // The Concert Bonus applies from the NEXT CONCERT, not on purchase. That
+  // timing IS the mechanic -- it is why buying a song early is worth more than
+  // buying the same song late, which is the effect this project identified as
+  // the biggest gap in every rival planner. A model that switched it on at
+  // purchase would erase exactly that.
+  {
+    const funded: GcRunState = {
+      ...scenario.initialState(),
+      scenario: {
+        ...scenario.initialState().scenario,
+        tokens: { dance: 400, passion: 400, vocal: 400, visual: 400, mental: 400 },
+      },
+    };
+    const bought = scenario.buy(funded, { kind: "song", id: 200 });
+    check("a Concert Bonus is NOT active the moment the song is bought",
+      bought.scenario.songsOwned.length === 1 &&
+      bought.scenario.concertBonusesActive.length === 0,
+      `owns ${bought.scenario.songsOwned.length}, active ${bought.scenario.concertBonusesActive.length}`);
+
+    let st = bought;
+    const rng = mulberry32(5);
+    while (st.scenario.concertsHeld === 0 && st.turn < 30) {
+      st = scenario.step(st, { kind: "rest" }, rng);
+    }
+    check("it becomes active at the next concert",
+      st.scenario.concertsHeld === 1 && st.scenario.concertBonusesActive.includes(200),
+      `after concert ${st.scenario.concertsHeld}, active: [${st.scenario.concertBonusesActive}]`);
+  }
+
   const oneOff = scenario.buy(rich, { kind: "song", id: 204 });
   check("a one-off mastery bonus is granted on purchase",
     oneOff.stats.speed - rich.stats.speed === 20,

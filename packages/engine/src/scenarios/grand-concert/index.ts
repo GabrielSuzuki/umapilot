@@ -16,7 +16,9 @@ import {
   type GrandConcertDataset,
 } from "../../../../data/src/types";
 import { weightedPick, chance, mulberry32, type Rng } from "../../rng";
-import { decodeEffectText, accumulatePerTrainingBonuses } from "../../../../data/src/effects";
+import {
+  decodeEffectText, accumulatePerTrainingBonuses, accumulateConcertBonuses,
+} from "../../../../data/src/effects";
 import {
   computeTraining, resolveBaseTraining, isRainbow,
   MOOD_VALUES, type Mood, type PlacedCard, type FacilityTable,
@@ -79,6 +81,20 @@ export interface GrandConcertState {
   tokens: TokenVector;
   tokenCaps: TokenVector;
   songsOwned: number[];
+  /**
+   * Songs whose CONCERT BONUS is live.
+   *
+   * Separate from `songsOwned` because the two switch on at different moments,
+   * and that difference is the whole reason song ordering matters. A Mastery
+   * Bonus applies the instant the song is learned. A Concert Bonus applies from
+   * the NEXT CONCERT to the end of the career -- so a song bought in Classic
+   * June multiplies every remaining training, and the same song bought in
+   * Senior November multiplies almost none.
+   *
+   * Collapsing the two would erase the time-value effect this project
+   * identified as the single biggest gap in every rival planner.
+   */
+  concertBonusesActive: number[];
   /** Techniques bought since the last concert. Gates the next song unlock. */
   techniquesThisPhase: number;
   techniquesTotal: number;
@@ -123,6 +139,13 @@ const INITIAL_PLACEMENT_SEED = 0x5eed;
 const EMPTY_SONG_BONUSES: { stats: Partial<Record<Stat, number>>; skillPoints: number } =
   { stats: {}, skillPoints: 0 };
 
+const EMPTY_CONCERT_BONUSES = {
+  friendshipTrainingEffectiveness: 0,
+  supportChainEventFrequency: 0,
+  specialityPriority: 0,
+  unparsed: [] as string[],
+};
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -159,6 +182,10 @@ export class GrandConcertScenario
   private readonly songBonusCache = new Map<
     string,
     { stats: Partial<Record<Stat, number>>; skillPoints: number }
+  >();
+  private readonly concertBonusCache = new Map<
+    string,
+    ReturnType<typeof accumulateConcertBonuses>
   >();
 
   constructor(
@@ -256,6 +283,7 @@ export class GrandConcertScenario
         tokens: { ...ZERO_TOKENS },
         tokenCaps: { dance: cap, passion: cap, vocal: cap, visual: cap, mental: cap },
         songsOwned: [],
+        concertBonusesActive: [],
         techniquesThisPhase: 0,
         techniquesTotal: 0,
         concertsHeld: 0,
@@ -324,11 +352,25 @@ export class GrandConcertScenario
       case "train": {
         const placed = this.placedCards(next, action.facility);
         const songs = this.songBonuses(s.songsOwned);
+        const concert = this.concertBonuses(s.concertBonusesActive);
+        if (concert.friendshipTrainingEffectiveness > 0) {
+          addAssumption(s,
+            "a song's Concert Bonus of \"Friendship Training Effectiveness +N%\" is " +
+            "applied as a multiplier on the friendship term. The game's wording is " +
+            "unambiguous about WHAT it boosts but not about HOW it composes -- this " +
+            "reads it as scaling the whole friendship term, rather than adding N " +
+            "percentage points to each contributing card's own bonus. The two differ " +
+            "once several cards contribute, and one logged run separates them.");
+        }
+        for (const u of concert.unparsed) {
+          addAssumption(s, `unrecognised Concert Bonus clause, contributing nothing: ${u}`);
+        }
         const result = computeTraining({
           facility: action.facility,
           facilityLevel: s.facilityLevels[action.facility],
           songBonuses: songs.stats,
           songSkillPointBonus: songs.skillPoints,
+          concertFriendshipBonus: concert.friendshipTrainingEffectiveness,
           mood: moodFromIndex(next.mood),
           growthRate: s.growthRate,
           cards: placed,
@@ -729,6 +771,32 @@ export class GrandConcertScenario
     return value;
   }
 
+  /**
+   * Concert Bonuses currently running, summed.
+   *
+   * Cached on the active set for the same reason `songBonuses` is: the search
+   * calls `step` tens of thousands of times per recommendation.
+   *
+   * Only the friendship term is applied. "Support Chain Event Frequency Lvl +N"
+   * raises how often support events fire, and event outcomes are not in
+   * master.mdb at all (see docs/events.md); "Speciality Priority Up" is a
+   * race-side effect this engine does not simulate. Both are decoded, carried,
+   * and deliberately not converted into a number the projection would then be
+   * pretending to know.
+   */
+  private concertBonuses(active: number[]): ReturnType<typeof accumulateConcertBonuses> {
+    if (active.length === 0) return EMPTY_CONCERT_BONUSES;
+    const key = active.slice().sort((a, b) => a - b).join(",");
+    const hit = this.concertBonusCache.get(key);
+    if (hit) return hit;
+    const texts = active.map(
+      (id) => this.dataset.songs.find((x) => x.id === id)?.concert_bonus?.text ?? null,
+    );
+    const value = accumulateConcertBonuses(texts);
+    this.concertBonusCache.set(key, value);
+    return value;
+  }
+
   private growBonds(s: GrandConcertState, facility: Stat): void {
     for (const idx of s.placement[facility]) {
       const card = s.cards[idx]!;
@@ -743,6 +811,12 @@ export class GrandConcertScenario
     if (!concert) return;
 
     s.concertsHeld += 1;
+
+    // Every song owned when the concert happens now has its Concert Bonus
+    // running, for the rest of the career. Buying one turn later than this
+    // costs you the whole concert's worth of multiplier.
+    s.concertBonusesActive = [...s.songsOwned];
+
     const greatSuccess = s.songsOwned.length >= concert.songs_for_great_success;
     const statBump = greatSuccess ? 10 : 3;
     for (const stat of STATS) {
@@ -782,6 +856,7 @@ function cloneState(state: GcRunState): GcRunState {
       tokens: { ...s.tokens },
       tokenCaps: { ...s.tokenCaps },
       songsOwned: [...s.songsOwned],
+      concertBonusesActive: [...s.concertBonusesActive],
       facilityLevels: { ...s.facilityLevels },
       cards: s.cards.map((c) => ({ ...c, effects: { ...c.effects } })),
       placement: {

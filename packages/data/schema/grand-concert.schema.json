@@ -94,7 +94,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name", "cost", "mastery_bonus"],
+        "required": ["id", "name", "cost", "mastery_bonus", "concert_bonus"],
         "properties": {
           "id": { "type": "integer" },
           "name": { "type": ["string", "null"] },
@@ -103,9 +103,13 @@
             "$ref": "#/definitions/effect",
             "description": "Applies the moment the song is learned."
           },
+          "concert_bonus": {
+            "$ref": "#/definitions/effect",
+            "description": "Applies from the next concert until the end of the career. The game ships the wording (text_data category 208, keyed by single_mode_live_song_list.id), so this is read rather than decoded."
+          },
           "concert_bonus_type": {
             "type": ["integer", "null"],
-            "description": "Applies from the next concert until the end of the career. Opcode not yet decoded."
+            "description": "The raw opcode behind concert_bonus. Kept so a future check can confirm the wording still matches the type it describes; nothing derives behaviour from it."
           },
           "concert_bonus_value": { "type": ["integer", "null"] },
           "live_id": { "type": ["integer", "null"] }

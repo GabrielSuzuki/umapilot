@@ -103,6 +103,16 @@ export function syntheticDataset(): GrandConcertDataset {
   ];
   // Two currencies at once, like the real ones: the cheapest song in the game
   // is Passion 21 + Visual 21 and nothing else.
+  const concertEffects = [
+    "Friendship Training Effectiveness +5%",
+    "Support Chain Event Frequency Lvl +1",
+    "Friendship Training Effectiveness +10%",
+    "Speciality Priority Up +5",
+    "Friendship Training Effectiveness +5%",
+    "Support Chain Event Frequency Lvl +1",
+    "Speciality Priority Up +5",
+    "Friendship Training Effectiveness +5%",
+  ];
   const songs = Array.from({ length: 8 }, (_, i) => {
     const cost = tokens();
     // Scaled to this fixture's 24-turn career: the real cheapest song is 21+21
@@ -115,6 +125,10 @@ export function syntheticDataset(): GrandConcertDataset {
       name: `Synthetic Song ${i + 1}`,
       cost,
       mastery_bonus: { text: songEffects[i] ?? "Training Speed Gain +1", raw: [] },
+      // The wording the game actually prints, because the engine reads text
+      // rather than opcodes. All three real types appear so the decoder's
+      // whole surface is exercised, including the one not yet seen on screen.
+      concert_bonus: { text: concertEffects[i] ?? "Speciality Priority Up +5", raw: [] },
       concert_bonus_type: null,
       concert_bonus_value: null,
       live_id: null,

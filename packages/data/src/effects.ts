@@ -156,3 +156,110 @@ export function accumulatePerTrainingBonuses(
 
   return { stats, skillPoints, unparsed };
 }
+
+// ---------------------------------------------------------------------------
+// Concert Bonus
+// ---------------------------------------------------------------------------
+
+/**
+ * A song's Concert Bonus, decoded from the game's own wording.
+ *
+ * This was the largest known gap in the model until 2026-09-06. `master.mdb`
+ * stores it as `single_mode_live_song_list.live_bonus_type` -- an integer with
+ * three values and no description attached to the row -- so it shipped
+ * undecoded and unapplied, leaving every song undervalued, and songs bought
+ * EARLY undervalued most, since the Concert Bonus is precisely the half whose
+ * worth scales with turns remaining.
+ *
+ * It turned out not to need decoding at all. `text_data` category 208, keyed by
+ * `single_mode_live_song_list.id`, carries the wording the game prints on the
+ * song card. The key alignment is verified rather than assumed: the six
+ * category-208 indices reading "Support Chain Event Frequency Lvl +1" are
+ * exactly the six rows with `live_bonus_type` 2 -- set equality -- and two
+ * songs observed on the lesson screen confirm the same pairing independently.
+ *
+ * So the opcode is now a cross-check, not a source.
+ */
+export interface DecodedConcertBonus {
+  /**
+   * "Friendship Training Effectiveness +5%" -- percentage points.
+   *
+   * The only one of the three the training model can act on today.
+   */
+  friendshipTrainingEffectiveness: number;
+  /** "Support Chain Event Frequency Lvl +1" -- levels, not a percentage. */
+  supportChainEventFrequency: number;
+  /** "Speciality Priority Up" and similar -- race-side, not modelled here. */
+  specialityPriority: number;
+  /** Any clause the parser did not understand. Never silently discarded. */
+  unparsed: string[];
+}
+
+/** "Friendship Training Effectiveness +5%" */
+const RE_CB_FRIENDSHIP =
+  /^Friendship\s+Training\s+Effectiveness\s+\+(\d+)%?$/i;
+/** "Support Chain Event Frequency Lvl +1" */
+const RE_CB_CHAIN =
+  /^Support\s+Chain\s+Event\s+Frequency\s+Lvl\s+\+(\d+)$/i;
+/**
+ * "Speciality Priority Up +5" / "Specialty Priority Up +5".
+ *
+ * Both spellings, because the guide writes one and the game may write the
+ * other, and this is the ONE Concert Bonus type not yet seen on screen -- so
+ * its exact wording is still unknown. If it does not match, the clause lands in
+ * `unparsed` and the test suite fails loudly rather than the bonus quietly
+ * contributing nothing. That is the intended outcome, not a bug to work around.
+ */
+const RE_CB_SPECIALITY =
+  /^Special(?:i)?ty\s+Priority\s+Up(?:\s+\+?(\d+)%?)?$/i;
+
+export function decodeConcertBonus(text: string | null): DecodedConcertBonus {
+  const out: DecodedConcertBonus = {
+    friendshipTrainingEffectiveness: 0,
+    supportChainEventFrequency: 0,
+    specialityPriority: 0,
+    unparsed: [],
+  };
+  if (!text) return out;
+
+  for (const rawLine of text.split(/\\n|\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(RE_CB_FRIENDSHIP))) {
+      out.friendshipTrainingEffectiveness += Number(m[1]);
+      continue;
+    }
+    if ((m = line.match(RE_CB_CHAIN))) {
+      out.supportChainEventFrequency += Number(m[1]);
+      continue;
+    }
+    if ((m = line.match(RE_CB_SPECIALITY))) {
+      out.specialityPriority += m[1] ? Number(m[1]) : 1;
+      continue;
+    }
+    out.unparsed.push(line);
+  }
+  return out;
+}
+
+/** Sum the Concert Bonuses of a set of songs. */
+export function accumulateConcertBonuses(
+  effectTexts: Array<string | null>,
+): DecodedConcertBonus {
+  const total: DecodedConcertBonus = {
+    friendshipTrainingEffectiveness: 0,
+    supportChainEventFrequency: 0,
+    specialityPriority: 0,
+    unparsed: [],
+  };
+  for (const text of effectTexts) {
+    const d = decodeConcertBonus(text);
+    total.friendshipTrainingEffectiveness += d.friendshipTrainingEffectiveness;
+    total.supportChainEventFrequency += d.supportChainEventFrequency;
+    total.specialityPriority += d.specialityPriority;
+    total.unparsed.push(...d.unparsed);
+  }
+  return total;
+}

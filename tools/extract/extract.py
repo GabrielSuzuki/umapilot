@@ -45,6 +45,19 @@ from pathlib import Path
 # text_data categories
 TEXT_LIVE_SQUARE_NAME = 209   # "Dance Step Basics", "Run for Our Dream!"
 TEXT_LIVE_SQUARE_DESC = 207   # "Speed +5", "Training Skill Pt Gain +2"
+# The CONCERT BONUS wording, keyed by single_mode_live_song_list.id -- NOT by a
+# square or text id. Found 2026-09-06; before that a song's concert bonus was a
+# bare `live_bonus_type` integer that shipped undecoded and unapplied, and was
+# the largest known gap in what a purchase was worth.
+#
+# The key alignment is not assumed. Every category-208 index whose text reads
+# "Support Chain Event Frequency Lvl +1" has live_bonus_type 2, and those six
+# indices are EXACTLY the six type-2 rows -- set equality, not a sample. The
+# same holds for "Friendship Training Effectiveness +5%" against type 3, which
+# two songs observed in game confirm independently.
+#
+# So there is nothing to decode. The game ships the wording; read it.
+TEXT_LIVE_CONCERT_BONUS = 208
 TEXT_SKILL_NAME = 47
 TEXT_SKILL_DESC = 48
 TEXT_SUPPORT_CARD_FULL = 75   # "[Tracen Academy] Special Week"
@@ -302,7 +315,8 @@ class Song:
     name: str | None
     cost: Cost
     mastery_bonus: Effect          # applies immediately on purchase
-    concert_bonus_type: int | None  # applies from the next concert to end of career
+    concert_bonus: Effect          # applies from the next concert to end of career
+    concert_bonus_type: int | None  # the raw opcode, kept for cross-checking
     concert_bonus_value: int | None
     live_id: int | None
 
@@ -406,11 +420,14 @@ class Extractor:
     def songs(self) -> list[Song]:
         # Concert bonus lives on single_mode_live_song_list, keyed by the
         # square's content text id.
-        bonus_by_text_id: dict[int, tuple[int, int, int]] = {}
-        for _id, command_id, live_id, _level, text_id, btype, bvalue in self.db.execute(
+        # Keyed by the square's content text id, which is what joins song_list
+        # to live_square. The concert-bonus WORDING is keyed by song_list.id
+        # instead, so both are carried through together.
+        bonus_by_text_id: dict[int, tuple[int, int, int, int]] = {}
+        for row_id, command_id, live_id, _level, text_id, btype, bvalue in self.db.execute(
             "SELECT * FROM single_mode_live_song_list"
         ):
-            bonus_by_text_id.setdefault(text_id, (btype, bvalue, live_id))
+            bonus_by_text_id.setdefault(text_id, (btype, bvalue, live_id, row_id))
 
         out: list[Song] = []
         rows = self.db.execute(
@@ -421,12 +438,26 @@ class Extractor:
             sid, title_id, content_id, mb_id = row[0], row[1], row[2], row[3]
             mastery = self.master_bonus(mb_id)
             mastery.text = self.strip_markup(self.text(TEXT_LIVE_SQUARE_DESC, content_id))
-            btype, bvalue, live_id = bonus_by_text_id.get(content_id, (None, None, None))
+            btype, bvalue, live_id, row_id = bonus_by_text_id.get(
+                content_id, (None, None, None, None))
+
+            # The concert bonus, read rather than decoded. `raw` keeps the
+            # opcode pair so a future check can confirm the text still matches
+            # the type it is supposed to describe.
+            concert = Effect(text=None, raw=[])
+            if row_id is not None:
+                concert = Effect(
+                    text=self.strip_markup(
+                        self.text(TEXT_LIVE_CONCERT_BONUS, row_id)),
+                    raw=[v for v in (btype, bvalue) if v is not None],
+                )
+
             out.append(Song(
                 id=sid,
                 name=self.strip_markup(self.text(TEXT_LIVE_SQUARE_NAME, title_id)),
                 cost=self.costs_from_square_row(row),
                 mastery_bonus=mastery,
+                concert_bonus=concert,
                 concert_bonus_type=btype,
                 concert_bonus_value=bvalue,
                 live_id=live_id,

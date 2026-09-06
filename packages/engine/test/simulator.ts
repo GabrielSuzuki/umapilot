@@ -17,7 +17,7 @@ import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
-import { decodeEffectText } from "../../data/src/effects";
+import { decodeEffectText, decodeConcertBonus } from "../../data/src/effects";
 import { greedyShop } from "../src/planner/rollout";
 import { mulberry32 } from "../src/rng";
 import {
@@ -406,6 +406,46 @@ check("an interpolated level sits between the two known ones",
       ? "every clause recognised"
       : `${unknown.size} unrecognised, each contributing nothing: ` +
         [...unknown].slice(0, 3).join(" | "));
+
+  // The Concert Bonus, now read from the game's own wording rather than left
+  // as an undecoded opcode. This is the check that matters on real data,
+  // because the parser is strict: if Cygames rewords a bonus, the clause lands
+  // in `unparsed` and contributes nothing, which is the quiet kind of wrong.
+  {
+    let withText = 0;
+    const unknown = new Set<string>();
+    const byType = new Map<number | null, Set<string>>();
+    for (const song of dataset.songs) {
+      const text = song.concert_bonus?.text ?? null;
+      if (text) withText++;
+      const d = decodeConcertBonus(text);
+      for (const u of d.unparsed) unknown.add(u);
+      const kinds = new Set(byType.get(song.concert_bonus_type) ?? []);
+      if (d.friendshipTrainingEffectiveness) kinds.add("friendship");
+      if (d.supportChainEventFrequency) kinds.add("support-chain");
+      if (d.specialityPriority) kinds.add("speciality");
+      byType.set(song.concert_bonus_type, kinds);
+    }
+    check("every song carries its Concert Bonus wording",
+      withText === dataset.songs.length,
+      `${withText} of ${dataset.songs.length} songs have text_data category 208 text`);
+    check("no Concert Bonus clause is silently ignored", unknown.size === 0,
+      unknown.size === 0 ? "every clause recognised"
+        : `${unknown.size} unrecognised: ${[...unknown].slice(0, 3).join(" | ")}`);
+
+    // The opcode is kept as a cross-check, and this is the check: one
+    // live_bonus_type must mean exactly one kind of bonus. If a type ever maps
+    // to two different wordings, the category-208 key alignment has broken and
+    // every Concert Bonus in the model is suspect.
+    let consistent = true;
+    const shown: string[] = [];
+    for (const [t, kinds] of byType) {
+      shown.push(`type ${t} -> ${[...kinds].join("+") || "none"}`);
+      if (kinds.size > 1) consistent = false;
+    }
+    check("each live_bonus_type maps to exactly one kind of bonus", consistent,
+      shown.join(", "));
+  }
 
   const scenario = makeScenario();
   const start = scenario.initialState();
