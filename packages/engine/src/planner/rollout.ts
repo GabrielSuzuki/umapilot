@@ -126,6 +126,41 @@ function costIndex(scenario: GrandConcertScenario): CostIndex {
  *     purchase. `legalShopActions` offers the whole catalogue of 248, so both
  *     this rule and the search are choosing from a menu the player never sees.
  */
+/**
+ * How short of a board song we will wait for, in total tokens.
+ *
+ * A training grants roughly 10-25 performance points of one type, so this is
+ * about two trainings' patience. It is a ROLLOUT-POLICY constant, invented to
+ * sit between two measured pathologies rather than derived from anything -- and
+ * it is the search, not this, that is supposed to decide when waiting is worth
+ * it. The policy only has to avoid being pathological, since it is the
+ * yardstick the search must beat and the estimator behind every leaf value.
+ */
+const SONG_PATIENCE_TOKENS = 40;
+
+/**
+ * Total shortfall on the cheapest unowned song currently ON THE BOARD, or null
+ * if there is no song to wait for.
+ */
+function songShortfall(
+  scenario: GrandConcertScenario,
+  state: GcRunState,
+  index: CostIndex,
+): number | null {
+  const owned = state.scenario.songsOwned;
+  const onBoard = state.scenario.offers;
+  const have = state.scenario.tokens;
+
+  let best: number | null = null;
+  for (const s of index.songsByCost) {
+    if (!onBoard.includes(s.id) || owned.includes(s.id)) continue;
+    let short = 0;
+    for (const c of TOKENS) short += Math.max(0, s.cost[c] - have[c]);
+    if (best === null || short < best) best = short;
+  }
+  return best;
+}
+
 export function greedyShop(
   scenario: GrandConcertScenario,
   state: GcRunState,
@@ -159,6 +194,26 @@ export function greedyShop(
     const reserve = index.songsByCost
       .find((s) => onBoard.includes(s.id) && !owned.includes(s.id))?.cost;
     const have = next.scenario.tokens;
+
+    // A song is on the board but not yet affordable. Whether to wait is the
+    // real decision the board creates, and it is easy to get wrong in both
+    // directions.
+    //
+    // Buying ANYTHING redraws all three offers, so purchasing a technique now
+    // throws the song away. The first version of this rule always bought
+    // rather than stall, and on real data that produced ZERO songs in a
+    // 72-turn career: every song that appeared was discarded by the next
+    // technique purchase before enough tokens accumulated.
+    //
+    // The opposite error is worse in a different way -- holding forever for a
+    // song priced in a currency the run does not generate, which freezes the
+    // board and ends the career with tokens unspent. That was measured too.
+    //
+    // So: wait only when nearly there. If the shortfall is within one or two
+    // trainings' worth of tokens the song will arrive shortly and the wait is
+    // cheap; if it is far off, buy and take a fresh board.
+    const shortfall = songShortfall(scenario, next, index);
+    if (shortfall !== null && shortfall <= SONG_PATIENCE_TOKENS) break;
 
     const techniques = actions.filter((a) => a.kind === "technique");
     if (techniques.length === 0) break;
