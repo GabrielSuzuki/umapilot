@@ -428,20 +428,33 @@ check("an interpolated level sits between the two known ones",
     }
     check("every song carries its Concert Bonus wording",
       withText === dataset.songs.length,
-      `${withText} of ${dataset.songs.length} songs have text_data category 208 text`);
-    check("no Concert Bonus clause is silently ignored", unknown.size === 0,
-      unknown.size === 0 ? "every clause recognised"
-        : `${unknown.size} unrecognised: ${[...unknown].slice(0, 3).join(" | ")}`);
+      `${withText} of ${dataset.songs.length} songs have text_data category 208 text`
+      + (withText === 0 ? " -- re-run `npm run extract`; this dataset predates it" : ""));
+
+    // `unknown.size === 0` on its own is vacuous: no text means no clauses,
+    // which means nothing to fail on. Require that something was actually
+    // decoded before believing the absence of unparsed clauses.
+    check("no Concert Bonus clause is silently ignored",
+      withText > 0 && unknown.size === 0,
+      unknown.size > 0
+        ? `${unknown.size} unrecognised: ${[...unknown].slice(0, 3).join(" | ")}`
+        : withText > 0 ? "every clause recognised"
+          : "nothing to check -- no wording was extracted");
 
     // The opcode is kept as a cross-check, and this is the check: one
     // live_bonus_type must mean exactly one kind of bonus. If a type ever maps
     // to two different wordings, the category-208 key alignment has broken and
     // every Concert Bonus in the model is suspect.
-    let consistent = true;
+    // EXACTLY one, not at most one. `kinds.size > 1` alone passes when every
+    // type maps to nothing at all, which is precisely the state an un-extracted
+    // dataset is in -- the check would go green at the moment it stopped being
+    // able to see anything. That is the failure this suite exists to catch, and
+    // writing it into the suite itself would be a poor joke.
+    let consistent = byType.size > 0;
     const shown: string[] = [];
     for (const [t, kinds] of byType) {
-      shown.push(`type ${t} -> ${[...kinds].join("+") || "none"}`);
-      if (kinds.size > 1) consistent = false;
+      shown.push(`type ${t} -> ${[...kinds].join("+") || "NONE"}`);
+      if (kinds.size !== 1) consistent = false;
     }
     check("each live_bonus_type maps to exactly one kind of bonus", consistent,
       shown.join(", "));
