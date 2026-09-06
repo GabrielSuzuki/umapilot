@@ -16,6 +16,7 @@ import { STATS, type GrandConcertDataset, type Stat, type StatVector } from "../
 import { mulberry32 } from "./rng";
 import { GrandConcertScenario, type CardState, type GcRunState } from "./scenarios/grand-concert";
 import { POLICIES, type Policy } from "./policy";
+import { greedyShop } from "./planner/rollout";
 
 interface Input {
   cards: CardState[];
@@ -59,24 +60,14 @@ function playOne(
 /**
  * Spend performance tokens.
  *
- * The first version of this only bought techniques, which meant no simulated
- * career ever learned a song -- forfeiting both the permanent per-training stat
- * bonuses and the Great Success stat bump that needs three songs before each
- * concert. A real run learns most of them (the logged one: 19 of 23).
- *
- * Songs first, cheapest affordable; techniques with whatever is left.
+ * Delegates to the planner's rollout shopper so the projection and the
+ * recommender simulate the SAME player. They used to have separate copies of a
+ * "songs first, then techniques" rule which, measured on real data, bought a
+ * song on 0 of 72 turns -- see greedyShop for why. Two copies of a bug is how
+ * fixing one of them looks like fixing both.
  */
 function shop(scenario: GrandConcertScenario, state: GcRunState): GcRunState {
-  let next = state;
-  for (let i = 0; i < 4; i++) {
-    const actions = scenario.legalShopActions(next);
-    const song = actions.find((a) => a.kind === "song");
-    const tech = actions.find((a) => a.kind === "technique");
-    const pick = song ?? tech;
-    if (!pick) break;
-    next = scenario.buy(next, pick);
-  }
-  return next;
+  return greedyShop(scenario, state, 4);
 }
 
 function percentile(sorted: number[], p: number): number {

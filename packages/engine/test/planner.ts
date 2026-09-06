@@ -214,6 +214,91 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   check("greedy shopping buys songs before techniques",
     shopped.scenario.songsOwned.length === 3 && shopped.scenario.techniquesTotal === 0,
     `${shopped.scenario.songsOwned.length} songs, ${shopped.scenario.techniquesTotal} techniques`);
+
+  // The regression that matters, and the one nothing was checking.
+  //
+  // The old rule -- songs first, then techniques -- reads correctly and could
+  // not buy a song in a whole career, because "first" only ever meant first
+  // among what was affordable that instant, and cheap single-currency
+  // techniques skimmed every currency away before a two-currency song could be
+  // reached. On real data: a song affordable on 0 of 72 turns, across every
+  // seed tried. It went unnoticed for two milestones because the only career
+  // any test played bought techniques exclusively by construction.
+  //
+  // So: play the whole thing and insist the shopper actually shops. Not how
+  // WELL -- that is the search's job, and this policy is only the floor it
+  // stands on.
+  {
+    // The rule as it shipped through M2, kept here so the regression is not
+    // vacuous. A test that only asserts the fix works cannot tell you whether
+    // the fixture is even capable of expressing the bug -- and this fixture had
+    // to be reshaped before it was, because evenly-spread technique costs
+    // cannot reproduce a treadmill that runs on single-currency ones.
+    const legacyShop = (s: GcRunState, n: number): GcRunState => {
+      let x = s;
+      for (let i = 0; i < n; i++) {
+        const a = scenario.legalShopActions(x);
+        const pick = a.find((y) => y.kind === "song") ?? a.find((y) => y.kind === "technique");
+        if (!pick) break;
+        x = scenario.buy(x, pick);
+      }
+      return x;
+    };
+
+    const play = (seed: number, shop: (s: GcRunState, n: number) => GcRunState) => {
+      let st = scenario.initialState();
+      const rng = mulberry32(seed);
+      while (!scenario.isTerminal(st)) {
+        st = scenario.step(st, competentPolicy(st, { scenario, target: policyTarget }), rng);
+        st = shop(st, RO.maxBuysPerTurn);
+      }
+      return st;
+    };
+
+    let legacySongs = 0, shippedSongs = 0, careersWithSong = 0;
+    for (const seed of [1, 2, 3]) {
+      legacySongs += play(seed, legacyShop).scenario.songsOwned.length;
+      const now = play(seed, (st, n) => greedyShop(scenario, st, n));
+      shippedSongs += now.scenario.songsOwned.length;
+      if (now.scenario.songsOwned.length > 0) careersWithSong++;
+    }
+
+    check("the pre-fix shop rule could not buy a song in a whole career",
+      legacySongs === 0,
+      `"songs first, then techniques" bought ${legacySongs} songs across 3 careers -- ` +
+      `first only ever meant first among what was affordable that instant`);
+    check("the rollout policy buys songs over a full career",
+      careersWithSong === 3,
+      `${shippedSongs} songs across 3 careers, ${careersWithSong}/3 bought at least one`);
+  }
+
+  // ...and still buys techniques. Reserving for songs without a per-currency
+  // surplus rule swings to the opposite pathology: on real data it bought
+  // 10-12 songs and ZERO techniques for an entire career, costing nearly half
+  // the run's skill points. A shopper that cannot buy skills is as broken as
+  // one that cannot buy songs.
+  {
+    let techniques = 0;
+    for (const seed of [1, 2, 3]) {
+      techniques += rollout(scenario, scenario.initialState(), mulberry32(seed), RO)
+        .scenario.techniquesTotal;
+    }
+    check("the rollout policy still buys techniques", techniques > 0,
+      `${techniques} techniques across 3 careers`);
+  }
+
+  // The consequence for the planner, which is why any of this matters: if the
+  // simulated player cannot convert tokens into songs, a token is worth only a
+  // technique's +5 SP, every token price collapses, and the lesson-shop layer
+  // is priced by a shopper who cannot shop.
+  {
+    const compiled = compileTarget(TARGET);
+    const poor = scenario.initialState();
+    const prices = shadowPrices(scenario, poor, compiled, { samples: 10, seed: 8, rollout: RO });
+    const priced = Object.values(prices.tokens).filter((p) => p > 0).length;
+    check("at least one performance token carries a positive price", priced > 0,
+      `${priced} of 5 priced above zero: ${JSON.stringify(prices.tokens)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

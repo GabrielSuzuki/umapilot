@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
 import { decodeEffectText } from "../../data/src/effects";
+import { greedyShop } from "../src/planner/rollout";
 import { mulberry32 } from "../src/rng";
 import {
   GrandConcertScenario, resolveBaseTraining, computeTraining,
@@ -92,18 +93,15 @@ function playCareer(seed: number): { state: GcRunState; turns: number } {
       state = scenario.step(state, { kind: "train", facility: pick }, rng);
     }
 
-    // Songs first, then techniques -- the same rule greedyShop() and the CLI
-    // use. It used to buy techniques ONLY, so the golden career finished with
-    // songsOwned: 0 and the entire song path -- mastery bonuses, per-training
-    // stat gains, the Great Success gate -- was covered by no regression at
-    // all. That is how the song-bonus wiring could be missing for two
-    // milestones without a single test noticing.
-    for (let i = 0; i < 4; i++) {
-      const shop = scenario.legalShopActions(state);
-      const pick = shop.find((a) => a.kind === "song") ?? shop.find((a) => a.kind === "technique");
-      if (!pick) break;
-      state = scenario.buy(state, pick);
-    }
+    // The same shopper the planner's rollout and the projection CLI use, so
+    // the golden career regresses the code that actually ships.
+    //
+    // It bought techniques ONLY until 2026-09-06, so the golden summary read
+    // songsOwned: 0 and the whole song path was covered by nothing. Changing it
+    // to "songs first, then techniques" did not help: measured on real data a
+    // song was affordable on 0 of 72 turns, so first-among-affordable never
+    // reached one. See greedyShop.
+    state = greedyShop(scenario, state, 4);
     turns++;
   }
   return { state, turns };
@@ -435,6 +433,78 @@ check("an interpolated level sits between the two known ones",
       `+${without.stats[stat] - funded.stats[stat]} without, ` +
       `+${with_.stats[stat] - owned.stats[stat]} with`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// The shop treadmill, pinned on the real dataset
+// ---------------------------------------------------------------------------
+
+/*
+ * planner.ts pins this on a fixture. It has to be pinned here too, because the
+ * bug was a property of the REAL cost structure and no fixture found it: songs
+ * need two currencies at once (the cheapest is Passion 21 + Visual 21) while
+ * techniques are cheap and often single-currency (the cheapest is Dance 8 and
+ * nothing else), so techniques skim each currency away before a song can ever
+ * be reached. Measured before the fix: a song was affordable on 0 of 72 turns,
+ * on every seed tried.
+ */
+{
+  const scenario = makeScenario();
+
+  const legacyShop = (state: GcRunState, n: number): GcRunState => {
+    let x = state;
+    for (let i = 0; i < n; i++) {
+      const a = scenario.legalShopActions(x);
+      const pick = a.find((y) => y.kind === "song") ?? a.find((y) => y.kind === "technique");
+      if (!pick) break;
+      x = scenario.buy(x, pick);
+    }
+    return x;
+  };
+
+  const play = (seed: number, shop: (s: GcRunState, n: number) => GcRunState) => {
+    let state = scenario.initialState();
+    const rng = mulberry32(seed);
+    let affordable = 0;
+    while (!scenario.isTerminal(state)) {
+      let pick: Stat = "speed";
+      let worst = Infinity;
+      for (const stat of STATS) {
+        const r = state.stats[stat] / scenario.statCaps[stat];
+        if (r < worst) { worst = r; pick = stat; }
+      }
+      state = state.energy < 30
+        ? scenario.step(state, { kind: "rest" }, rng)
+        : scenario.step(state, { kind: "train", facility: pick }, rng);
+      if (scenario.legalShopActions(state).some((a) => a.kind === "song")) affordable++;
+      state = shop(state, 4);
+    }
+    return { state, affordable };
+  };
+
+  const legacy = play(20260905, legacyShop);
+  const shipped = play(20260905, (st, n) => greedyShop(scenario, st, n));
+
+  check("the pre-fix shop rule bought no song in a real career",
+    legacy.state.scenario.songsOwned.length === 0,
+    `${legacy.state.scenario.songsOwned.length} songs, ` +
+    `${legacy.state.scenario.techniquesTotal} techniques, ` +
+    `a song affordable on ${legacy.affordable} of 72 turns`);
+
+  check("the shipped shop rule buys songs in a real career",
+    shipped.state.scenario.songsOwned.length > 0,
+    `${shipped.state.scenario.songsOwned.length} songs, ` +
+    `${shipped.state.scenario.techniquesTotal} techniques, ` +
+    `SP ${shipped.state.skillPoints} (was ${legacy.state.skillPoints})`);
+
+  check("it still buys techniques -- reserving without a per-currency surplus buys none",
+    shipped.state.scenario.techniquesTotal > 0,
+    `${shipped.state.scenario.techniquesTotal} techniques`);
+
+  const gain = STATS.reduce((a, x) => a + shipped.state.stats[x], 0)
+    - STATS.reduce((a, x) => a + legacy.state.stats[x], 0);
+  console.log(`  ..  songs are worth ${gain > 0 ? "+" : ""}${gain} total stat points over this career, ` +
+    `for ${shipped.state.skillPoints - legacy.state.skillPoints} skill points`);
 }
 
 // ---------------------------------------------------------------------------

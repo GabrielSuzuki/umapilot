@@ -39,6 +39,7 @@ const tokens = (d = 0, p = 0, v = 0, vi = 0, m = 0): TokenVector => ({
   dance: d, passion: p, vocal: v, visual: vi, mental: m,
 });
 
+
 /** Flat, uniform, and nothing like the real curve. That is the point. */
 function facilityLevels(stat: Stat) {
   const level1: Record<string, number | string> = { [stat]: 8, energy: -20, skill_points: 2, source: "SYNTHETIC" };
@@ -66,13 +67,24 @@ export function syntheticDataset(): GrandConcertDataset {
     failureRateBase[stat] = stat === "wit" ? { "1": 300, "5": 300 } : { "1": 500, "5": 500 };
   }
 
-  const techniques = Array.from({ length: 12 }, (_, i) => ({
-    id: 100 + i,
-    name: `Synthetic Technique ${i + 1}`,
-    kind: "technique_stat" as const,
-    cost: tokens(6 + i, 4, 4, 4, 4),
-    effect: { text: "SYNTHETIC", raw: [] },
-  }));
+  // Cheap and mostly SINGLE-currency, which is the shape that matters. The real
+  // cheapest technique costs 8 Dance and nothing else, and that is precisely
+  // what let techniques skim every currency away before a song -- which needs
+  // two currencies at once -- could ever be afforded. A fixture with evenly
+  // spread technique costs cannot reproduce that, and a fixture that cannot
+  // reproduce it makes the regression below vacuous.
+  const CURRENCIES = ["dance", "passion", "vocal", "visual", "mental"] as const;
+  const techniques = Array.from({ length: 20 }, (_, i) => {
+    const cost = tokens();
+    cost[CURRENCIES[i % 5]!] = 8 + (i % 4) * 3;
+    return {
+      id: 100 + i,
+      name: `Synthetic Technique ${i + 1}`,
+      kind: "technique_stat" as const,
+      cost,
+      effect: { text: "Skill Pts +5", raw: [] },
+    };
+  });
 
   // The effect TEXT is shaped like the game's, because the engine decodes
   // English text rather than opcodes and a fixture whose text does not parse
@@ -89,15 +101,25 @@ export function syntheticDataset(): GrandConcertDataset {
     "Training Guts Gain +1",
     "Training Wit Gain +1\nEnergy +10",
   ];
-  const songs = Array.from({ length: 8 }, (_, i) => ({
-    id: 200 + i,
-    name: `Synthetic Song ${i + 1}`,
-    cost: tokens(20 + i * 5, 15, 12, 20, 14),
-    mastery_bonus: { text: songEffects[i] ?? "Training Speed Gain +1", raw: [] },
-    concert_bonus_type: null,
-    concert_bonus_value: null,
-    live_id: null,
-  }));
+  // Two currencies at once, like the real ones: the cheapest song in the game
+  // is Passion 21 + Visual 21 and nothing else.
+  const songs = Array.from({ length: 8 }, (_, i) => {
+    const cost = tokens();
+    // Scaled to this fixture's 24-turn career: the real cheapest song is 21+21
+    // against 72 turns of income, so 18+18 against 24 turns keeps a song a
+    // genuine multi-turn saving problem without making it unreachable.
+    cost[CURRENCIES[i % 5]!] = 18;
+    cost[CURRENCIES[(i + 3) % 5]!] = 18;
+    return {
+      id: 200 + i,
+      name: `Synthetic Song ${i + 1}`,
+      cost,
+      mastery_bonus: { text: songEffects[i] ?? "Training Speed Gain +1", raw: [] },
+      concert_bonus_type: null,
+      concert_bonus_value: null,
+      live_id: null,
+    };
+  });
 
   const facilityTokens: Record<Stat, { primary: Token; secondary: Token }> = {
     speed: { primary: "dance", secondary: "visual" },

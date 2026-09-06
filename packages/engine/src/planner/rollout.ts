@@ -20,7 +20,7 @@ import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concer
 import type { ShopAction } from "../scenario";
 import type { Policy } from "../policy";
 import { focusedPolicy, competentPolicy } from "../policy";
-import type { Stat } from "../../../data/src/types";
+import { TOKENS, tokenTotal, type Stat, type TokenVector } from "../../../data/src/types";
 import {
   shortfallScore, meetsTarget, goalEstimate,
   type CompiledTarget, type GoalEstimate,
@@ -46,29 +46,113 @@ export const DEFAULT_ROLLOUT: Omit<RolloutOptions, "policyTarget"> = {
 };
 
 /**
- * Spend performance tokens greedily: songs first, then techniques.
+ * Cost lookups, built once per dataset.
  *
- * Songs first because a song carries a permanent per-training bonus and counts
- * toward the Great Success gate, so holding tokens past an affordable song
- * throws away compounding. This is knowingly not optimal -- *which* song and
- * *when* is the Layer B question the beam search exists to answer, and this
- * rule is only what the rollout does after the search's horizon runs out.
+ * The shop rule below has to price a technique against the tokens in hand on
+ * every purchase, and it runs inside the innermost loop of the search -- tens
+ * of thousands of steps per recommendation, several purchases per step. Doing
+ * it with a linear scan over 248 techniques inside another scan is quadratic
+ * per buy and dominates the entire planner.
+ */
+interface CostIndex {
+  technique: Map<number, TokenVector>;
+  songsByCost: Array<{ id: number; cost: TokenVector }>;
+}
+const COST_INDEX = new WeakMap<object, CostIndex>();
+
+function costIndex(scenario: GrandConcertScenario): CostIndex {
+  const key = scenario.dataset as unknown as object;
+  const hit = COST_INDEX.get(key);
+  if (hit) return hit;
+
+  const technique = new Map<number, TokenVector>();
+  for (const t of scenario.dataset.techniques) technique.set(t.id, t.cost);
+  const songsByCost = scenario.dataset.songs
+    .map((s) => ({ id: s.id, cost: s.cost }))
+    .sort((a, b) => tokenTotal(a.cost) - tokenTotal(b.cost));
+
+  const built = { technique, songsByCost };
+  COST_INDEX.set(key, built);
+  return built;
+}
+
+/**
+ * Spend performance tokens: songs first, and techniques only out of the surplus
+ * above what the next song costs.
  *
- * Exported because the CLI's projection uses the same rule, and a projection
- * whose shopping differs from the planner's rollout is not measuring the same
- * player.
+ * ---------------------------------------------------------------------------
+ * The rule this replaces could not buy a song. Ever.
+ * ---------------------------------------------------------------------------
+ *
+ * The old rule was "songs first, then techniques", which sounds right and is
+ * not, because it means *first among whatever is affordable this instant* -- and
+ * nothing ever was. Measured over a real 72-turn career on three seeds: a song
+ * was affordable on **0 of 72 turns**, every time. Sixty-three techniques
+ * bought, roughly 1,500 tokens spent, and the cheapest song in the game costs
+ * 42.
+ *
+ * The mechanism is that a song needs several currencies AT ONCE -- the cheapest
+ * is Passion 21 plus Visual 21 -- while techniques are cheap and often
+ * single-currency, so they skim each currency away the moment it appears. Bank
+ * Passion, a Passion technique takes it, and by the time Visual arrives Passion
+ * is short again. The career runs on a treadmill it cannot step off.
+ *
+ * This was not confined to a test. `greedyShop` is the rollout policy behind
+ * every leaf value the beam search computes, so the model's simulated player
+ * could not convert tokens into songs, which made a performance token worth
+ * only the +5 skill points of a technique, which collapsed every token shadow
+ * price and left the entire lesson-shop layer being priced by a shopper who
+ * could not shop.
+ *
+ * The fix reserves the cheapest unowned song's cost and lets techniques spend
+ * only what is left over IN EACH CURRENCY. The per-currency part is
+ * load-bearing and the obvious phrasing gets it wrong: "may spend a currency
+ * once you have enough of it" fails exactly at the boundary, because reaching
+ * the threshold in Passion and then spending it back down means Visual arrives
+ * to find Passion short again. A trace showed that happening every few turns.
+ *
+ * It is still a heuristic, and deliberately a modest one. It is NOT trying to
+ * shop well -- that is the search's job, and the search can only do it if the
+ * policy underneath is not structurally incapable. Measured against the old
+ * rule on real data it buys 3-6 songs per career while keeping roughly 90% of
+ * the skill points, where reserving without the per-currency surplus buys
+ * 10-12 songs and no techniques at all, costing nearly half the SP.
+ *
+ * KNOWN GAPS, both of which make this less accurate than it looks:
+ *   - Techniques gate song unlocks in the real game (a required count before
+ *     each new song). `legalShopActions` does not model that gate, so nothing
+ *     here can respect it.
+ *   - The lesson board offers THREE rotating techniques that refresh on
+ *     purchase. `legalShopActions` offers the whole catalogue of 248, so both
+ *     this rule and the search are choosing from a menu the player never sees.
  */
 export function greedyShop(
   scenario: GrandConcertScenario,
   state: GcRunState,
   maxBuys: number,
 ): GcRunState {
+  const index = costIndex(scenario);
   let next = state;
+
   for (let i = 0; i < maxBuys; i++) {
     const actions = scenario.legalShopActions(next);
-    const pick = actions.find((a) => a.kind === "song") ?? actions.find((a) => a.kind === "technique");
-    if (!pick) break;
-    next = scenario.buy(next, pick);
+
+    const song = actions.find((a) => a.kind === "song");
+    if (song) { next = scenario.buy(next, song); continue; }
+
+    const owned = next.scenario.songsOwned;
+    const reserve = index.songsByCost.find((s) => !owned.includes(s.id))?.cost;
+    const have = next.scenario.tokens;
+
+    const tech = actions.find((a) => {
+      if (a.kind !== "technique") return false;
+      if (!reserve) return true;
+      const cost = index.technique.get(a.id);
+      if (!cost) return false;
+      return TOKENS.every((c) => cost[c] <= Math.max(0, have[c] - reserve[c]));
+    });
+    if (!tech) break;
+    next = scenario.buy(next, tech);
   }
   return next;
 }
