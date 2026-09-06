@@ -371,6 +371,23 @@ export class GrandConcertScenario
         next.skillPoints += 20;
         addAssumption(s, "race rewards are a placeholder; races are not modelled yet");
         break;
+
+      default: {
+        // An unrecognised action used to fall straight through this switch and
+        // burn a turn doing nothing -- the quietest possible failure. It bit:
+        // test/simulator.ts kept passing `{ kind: "outing" }` long after the
+        // action was renamed to "recreation", so the golden career contained
+        // turns that silently did nothing at all, and nothing failed.
+        //
+        // The search added at M3 makes that far more dangerous, because it
+        // enumerates actions programmatically. A no-op action that costs a turn
+        // and yields nothing is a free "pass" move the game does not offer, and
+        // a beam search will happily discover and exploit one.
+        const never: never = action;
+        throw new Error(
+          `unknown turn action: ${JSON.stringify(never)}`,
+        );
+      }
     }
 
     next.turn += 1;

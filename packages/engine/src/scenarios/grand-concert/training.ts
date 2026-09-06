@@ -89,10 +89,10 @@ export interface PlacedCard {
    * working, but a group card MUST set it explicitly or its friendship bonus is
    * silently dropped.
    */
-  kind?: CardKind;
+  kind?: CardKind | undefined;
   effects: CardEffects;
   /** Bond-gated bumps to the values in `effects`. Applied before any multiplier. */
-  bondThresholdEffects?: BondThresholdEffect[];
+  bondThresholdEffects?: BondThresholdEffect[] | undefined;
 }
 
 export interface TrainingInput {

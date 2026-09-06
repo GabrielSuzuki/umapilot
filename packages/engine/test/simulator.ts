@@ -80,7 +80,7 @@ function playCareer(seed: number): { state: GcRunState; turns: number } {
     if (state.energy < 30) {
       state = scenario.step(state, { kind: "rest" }, rng);
     } else if (state.mood < 1 && turns % 11 === 0) {
-      state = scenario.step(state, { kind: "outing" }, rng);
+      state = scenario.step(state, { kind: "recreation" }, rng);
     } else {
       let pick: Stat = "speed";
       let worst = Infinity;
