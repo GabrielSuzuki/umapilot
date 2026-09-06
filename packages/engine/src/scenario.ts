@@ -13,6 +13,7 @@
  */
 
 import type { Facility, Stat, StatVector } from "../../data/src/types";
+import type { Rng } from "./rng";
 
 // ---------------------------------------------------------------------------
 // Turn actions
@@ -141,8 +142,16 @@ export interface Scenario<TScenarioState = unknown, TDataset = unknown> {
   readonly displayName: string;
   readonly dataset: TDataset;
 
-  /** Fresh state at turn 1. */
-  initialState(): RunState<TScenarioState>;
+  /**
+   * Fresh state at turn 1.
+   *
+   * Takes an optional rng because a scenario may have randomness to resolve
+   * before the first decision -- Grand Concert scatters support cards across
+   * facilities, and a turn-1 recommendation computed against an empty board is
+   * advice about a game state that never occurs. Implementations must be
+   * reproducible without one.
+   */
+  initialState(rng?: Rng): RunState<TScenarioState>;
 
   /** Turn actions legal right now. */
   legalTurnActions(state: RunState<TScenarioState>): TurnAction[];

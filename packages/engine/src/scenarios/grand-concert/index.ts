@@ -15,7 +15,8 @@ import {
   type Stat, type StatVector, type Token, type TokenVector,
   type GrandConcertDataset,
 } from "../../../../data/src/types";
-import { weightedPick, chance, type Rng } from "../../rng";
+import { weightedPick, chance, mulberry32, type Rng } from "../../rng";
+import { decodeEffectText, accumulatePerTrainingBonuses } from "../../../../data/src/effects";
 import {
   computeTraining, resolveBaseTraining, isRainbow,
   MOOD_VALUES, type Mood, type PlacedCard, type FacilityTable,
@@ -116,6 +117,12 @@ const moodFromIndex = (i: number): Mood => MOOD_ORDER[Math.min(Math.max(i + 2, 0
 export const TOKEN_CAP_BASE = 200;
 export const TOKEN_CAP_PER_CONCERT = 50;
 
+/** Fixed so `initialState()` with no argument is still reproducible. */
+const INITIAL_PLACEMENT_SEED = 0x5eed;
+
+const EMPTY_SONG_BONUSES: { stats: Partial<Record<Stat, number>>; skillPoints: number } =
+  { stats: {}, skillPoints: 0 };
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -149,6 +156,10 @@ export class GrandConcertScenario
     name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
   }>;
   private readonly caps: StatVector;
+  private readonly songBonusCache = new Map<
+    string,
+    { stats: Partial<Record<Stat, number>>; skillPoints: number }
+  >();
 
   constructor(
     readonly dataset: GrandConcertDataset,
@@ -216,9 +227,25 @@ export class GrandConcertScenario
     return this.failureChance(state.scenario, facility, state.energy);
   }
 
-  initialState(): GcRunState {
+  /**
+   * Fresh state at turn 1.
+   *
+   * Rolls the opening card placement, which it did NOT used to do. The first
+   * version left `placement` empty and only filled it at the END of `step`, so
+   * the first turn of every simulated career trained with zero support cards on
+   * every facility -- no friendship bonus, no card-count multiplier, no bond
+   * growth. One turn in seventy-two is a small error in a projection, but it is
+   * a large one in a RECOMMENDATION: turn 1 is the first advice a player ever
+   * sees, and it was computed against a board that does not exist in the game.
+   *
+   * `rng` is optional so the common case stays a constant expression. The
+   * default seed is fixed rather than arbitrary, because a career has to be
+   * reproducible from `initialState()` alone -- the golden-file regression
+   * depends on it.
+   */
+  initialState(rng: Rng = mulberry32(INITIAL_PLACEMENT_SEED)): GcRunState {
     const cap = TOKEN_CAP_BASE;
-    return {
+    const state: GcRunState = {
       turn: 1,
       stats: { ...ZERO_STATS, ...this.setup.startingStats },
       energy: 100,
@@ -248,6 +275,8 @@ export class GrandConcertScenario
         assumptions: [],
       },
     };
+    this.rollPlacement(state, rng);
+    return state;
   }
 
   // -------------------------------------------------------------------------
@@ -294,9 +323,12 @@ export class GrandConcertScenario
     switch (action.kind) {
       case "train": {
         const placed = this.placedCards(next, action.facility);
+        const songs = this.songBonuses(s.songsOwned);
         const result = computeTraining({
           facility: action.facility,
           facilityLevel: s.facilityLevels[action.facility],
+          songBonuses: songs.stats,
+          songSkillPointBonus: songs.skillPoints,
           mood: moodFromIndex(next.mood),
           growthRate: s.growthRate,
           cards: placed,
@@ -416,7 +448,38 @@ export class GrandConcertScenario
     if (!canAfford(s.tokens, song.cost)) throw new Error(`cannot afford song ${action.id}`);
     s.tokens = subtractTokens(s.tokens, song.cost);
     s.songsOwned.push(song.id);
-    addAssumption(s, "song mastery and concert bonus effects are not decoded; their value is not yet modelled");
+
+    // The Mastery Bonus applies immediately. Its per-training half is picked up
+    // by songBonuses() on every subsequent training; the one-off half is granted
+    // here.
+    //
+    // This used to do nothing at all. The decoder in packages/data/src/effects.ts
+    // was written, computeTraining() was given `songBonuses` and
+    // `songSkillPointBonus` parameters to receive it, and then nothing ever
+    // passed them -- so every song in the model was a pure token sink with no
+    // effect whatsoever. The consequence was not a small under-projection: it
+    // made a performance token worth ZERO at the margin, which made the entire
+    // lesson-shop layer an unconstrained problem with no gradient. A planner
+    // cannot schedule purchases whose payoff its own model prices at nothing.
+    const mastery = decodeEffectText(song.mastery_bonus.text);
+    for (const stat of STATS) {
+      const grant = mastery.oneOffStat[stat];
+      if (grant) next.stats[stat] = Math.min(this.caps[stat], next.stats[stat] + grant);
+    }
+    next.skillPoints += mastery.oneOffSkillPoints;
+    if (mastery.oneOffEnergy) {
+      next.energy = clamp(next.energy + mastery.oneOffEnergy, 0, 100);
+    }
+    for (const u of mastery.unparsed) {
+      addAssumption(s, `unparsed song effect clause, contributing nothing: ${u}`);
+    }
+    if (song.concert_bonus_type !== null) {
+      addAssumption(s,
+        "Concert Bonus opcodes are NOT decoded -- master.mdb stores the type as an " +
+        "integer with no shipped description, so a song's permanent from-next-concert " +
+        "effect is stored, flagged, and not applied. This is the largest known gap in " +
+        "the value of any purchase.");
+    }
     return next;
   }
 
@@ -637,6 +700,33 @@ export class GrandConcertScenario
         cardName: row.cardName,
         semantics: r.semantics!,
       }));
+  }
+
+  /**
+   * Per-training bonuses from every song currently owned.
+   *
+   * Cached because this sits in the innermost loop of the planner -- a search
+   * runs `step` tens of thousands of times per recommendation, and re-parsing
+   * the English text of every owned song each time would dominate the runtime.
+   * The key is the owned set, so the cache is correct across states and across
+   * runs of a career; it is bounded by the number of distinct song sets a search
+   * actually visits.
+   */
+  private songBonuses(songsOwned: number[]): {
+    stats: Partial<Record<Stat, number>>; skillPoints: number;
+  } {
+    if (songsOwned.length === 0) return EMPTY_SONG_BONUSES;
+    const key = songsOwned.slice().sort((a, b) => a - b).join(",");
+    const hit = this.songBonusCache.get(key);
+    if (hit) return hit;
+
+    const texts = songsOwned.map(
+      (id) => this.dataset.songs.find((x) => x.id === id)?.mastery_bonus.text ?? null,
+    );
+    const acc = accumulatePerTrainingBonuses(texts);
+    const value = { stats: acc.stats, skillPoints: acc.skillPoints };
+    this.songBonusCache.set(key, value);
+    return value;
   }
 
   private growBonds(s: GrandConcertState, facility: Stat): void {
