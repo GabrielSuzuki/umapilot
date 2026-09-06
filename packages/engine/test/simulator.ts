@@ -162,6 +162,110 @@ check("an interpolated level sits between the two known ones",
 }
 
 // ---------------------------------------------------------------------------
+// Group cards
+//
+// The regression these guard: a group card has `stat: null` like a friend card,
+// but unlike a friend card it carries a real friendship_bonus. The old
+// `card.stat === facility` test meant that bonus could never fire on any
+// facility -- the card was extracted, placed, and then ignored by the one term
+// that made it worth playing, and it failed silently as a slightly low number.
+// ---------------------------------------------------------------------------
+
+{
+  const baseArgs = {
+    facility: "speed" as Stat, facilityLevel: 1, mood: "normal" as const,
+    growthRate: {}, facilityTable: training.facilities,
+    statCaps: dataset.constants.statCaps,
+    currentStats: { speed: 0, stamina: 0, power: 0, guts: 0, wit: 0 },
+  };
+  // Team Sirius at max: friendship_bonus 15%, and a bond-80 unique effect
+  // worth training_effectiveness +10.
+  const teamSirius = {
+    cardId: 30081, stat: null, kind: "group" as const,
+    effects: { friendship_bonus: 15 },
+    bondThresholdEffects: [
+      { bondAtLeast: 80, effect: "training_effectiveness" as const, amount: 10 },
+    ],
+  };
+  const lightHello = {
+    cardId: 30052, stat: null, kind: "friend" as const,
+    effects: { friendship_bonus: 15 },  // deliberately nonzero; must be ignored
+  };
+
+  const cold = computeTraining({ ...baseArgs, cards: [{ ...teamSirius, bond: 40 }] });
+  const warm = computeTraining({ ...baseArgs, cards: [{ ...teamSirius, bond: 80 }] });
+
+  check("a group card's friendship bonus applies at bond 80 with no matching facility",
+    warm.terms.friendship > 1 && cold.terms.friendship === 1,
+    `bond 80 -> x${warm.terms.friendship.toFixed(2)}, bond 40 -> x${cold.terms.friendship}`);
+  check("a group card at bond 80 out-trains the same card below it",
+    warm.gains.speed > cold.gains.speed,
+    `${warm.gains.speed} > ${cold.gains.speed}`);
+  check("the bond-80 unique effect reaches the training effectiveness term",
+    warm.terms.trainingEffectiveness > cold.terms.trainingEffectiveness,
+    `${warm.terms.trainingEffectiveness} vs ${cold.terms.trainingEffectiveness}`);
+
+  check("a group card never counts as rainbow",
+    warm.terms.rainbowCards === 0 && warm.terms.friendshipCards === 1,
+    "no facility means no rainbow glow, but the friendship bonus is real");
+
+  const friend = computeTraining({ ...baseArgs, cards: [{ ...lightHello, bond: 100 }] });
+  check("a friend card contributes no friendship bonus even at full bond",
+    friend.terms.friendship === 1 && friend.terms.friendshipCards === 0,
+    "friend cards have friendship_bonus 0 on all 10 in master.mdb");
+
+  check("the group assumption is surfaced, not buried",
+    warm.assumptions.some((a) => a.includes("group card")),
+    "the bond-80 condition is a modelling choice, not a decoded fact");
+
+  // The failure mode this whole change exists to prevent: omitting `kind` makes
+  // a group card indistinguishable from a friend card.
+  const untagged = computeTraining({
+    ...baseArgs,
+    cards: [{ cardId: 30081, stat: null, bond: 100, effects: { friendship_bonus: 15 } }],
+  });
+  check("an untagged stat-less card is treated as a friend, not a group card",
+    untagged.terms.friendship === 1,
+    "this is the OLD behaviour, kept explicit so the difference is visible");
+}
+
+// ---------------------------------------------------------------------------
+// Outing scheduling
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const state = scenario.initialState();
+  const status = scenario.friendChainStatus(state);
+
+  check("every companion is tracked, group cards included",
+    status.length === ((dataset as any).outingChains?.length ?? 0) && status.length === 7,
+    status.map((c) => `${c.name}:${c.total}`).join(" "));
+
+  const sirius = status.find((c) => c.charaId === 30081);
+  check("Team Sirius owes 7 outings, not 1",
+    sirius?.total === 7 && sirius.kind === "group",
+    "the card chain is 1 step; the six member outings are the real cost");
+  check("group outings are not all-or-nothing, friend chains are",
+    status.filter((c) => c.kind === "group").every((c) => !c.allOrNothing) &&
+    status.filter((c) => c.kind === "friend").every((c) => c.allOrNothing),
+    "a half-finished group card leaves value on the table; a half-finished " +
+    "friend chain wastes the turns already spent");
+
+  // Advancing one member outing must not complete the card.
+  let advanced = scenario.step(state, { kind: "recreation", companionCharaId: 30081 },
+    mulberry32(7));
+  const after = scenario.friendChainStatus(advanced).find((c) => c.charaId === 30081)!;
+  check("one outing advances progress by exactly one",
+    after.done === 1 && after.remaining === 6);
+
+  const total = status.reduce((n, c) => n + c.total, 0);
+  check("the full outing bill is reported",
+    total === 35,
+    `${total} turns of outings across all 7 companions, against a 72-turn career`);
+}
+
+// ---------------------------------------------------------------------------
 // Purity and determinism
 // ---------------------------------------------------------------------------
 

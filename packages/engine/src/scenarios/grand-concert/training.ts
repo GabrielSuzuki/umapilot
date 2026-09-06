@@ -45,25 +45,54 @@ export interface FacilityLevelValues {
 
 export type FacilityTable = Record<Stat, Record<string, FacilityLevelValues>>;
 
+export type CardKind = "stat" | "friend" | "group";
+
+/** Resolved effect values at a card's level. Percentages except flat stat bonuses. */
+export interface CardEffects {
+  friendship_bonus?: number;
+  mood_effect?: number;
+  training_effectiveness?: number;
+  speed_bonus?: number;
+  stamina_bonus?: number;
+  power_bonus?: number;
+  guts_bonus?: number;
+  wit_bonus?: number;
+  skill_point_bonus?: number;
+}
+
+/**
+ * An effect that only switches on once the card's bond gauge reaches a
+ * threshold -- `support_card_unique_effect` type 101.
+ *
+ * Team Sirius's is worth a lot: training_effectiveness +10 at bond 80, on a card
+ * that has no facility of its own and so appears everywhere.
+ */
+export interface BondThresholdEffect {
+  bondAtLeast: number;
+  effect: keyof CardEffects;
+  amount: number;
+}
+
 /** One support card as it sits on a training this turn. */
 export interface PlacedCard {
   cardId: number;
   /** 0-100. Rainbow (rented-out max) training requires a full gauge and a matching facility. */
   bond: number;
-  /** Which facility this card specialises in; null for friend/group cards. */
+  /** Which facility this card specialises in; null for friend AND group cards. */
   stat: Stat | null;
-  /** Resolved effect values at this card's level. Percentages except the flat stat bonuses. */
-  effects: {
-    friendship_bonus?: number;
-    mood_effect?: number;
-    training_effectiveness?: number;
-    speed_bonus?: number;
-    stamina_bonus?: number;
-    power_bonus?: number;
-    guts_bonus?: number;
-    wit_bonus?: number;
-    skill_point_bonus?: number;
-  };
+  /**
+   * What kind of card this is. NOT derivable from `stat`: a friend card and a
+   * group card both have `stat: null`, but they behave differently, and that
+   * conflation was a real bug -- see `contributesFriendship`.
+   *
+   * Defaults to being inferred from `stat` when absent, so existing callers keep
+   * working, but a group card MUST set it explicitly or its friendship bonus is
+   * silently dropped.
+   */
+  kind?: CardKind;
+  effects: CardEffects;
+  /** Bond-gated bumps to the values in `effects`. Applied before any multiplier. */
+  bondThresholdEffects?: BondThresholdEffect[];
 }
 
 export interface TrainingInput {
@@ -104,6 +133,10 @@ export interface TrainingResult {
     trainingEffectiveness: number;
     cardCount: number;
     growth: Partial<Record<Stat, number>>;
+    /** Cards showing the rainbow glow (stat cards on their own facility). */
+    rainbowCards: number;
+    /** Cards contributing a friendship bonus -- rainbow cards plus group cards. */
+    friendshipCards: number;
   };
   /** Anything the result rests on that has not been verified against a real run. */
   assumptions: string[];
@@ -169,9 +202,84 @@ const STAT_BONUS_KEY: Record<Stat, keyof PlacedCard["effects"]> = {
   wit: "wit_bonus",
 };
 
-/** Is this card contributing a friendship (rainbow) bonus on this facility? */
+/** The bond a card needs before its friendship bonus applies. */
+export const RAINBOW_BOND = 80;
+
+/** A card's kind, inferred from `stat` when it was not set explicitly. */
+export function cardKind(card: PlacedCard): CardKind {
+  return card.kind ?? (card.stat === null ? "friend" : "stat");
+}
+
+/**
+ * Is this card showing RAINBOW training on this facility?
+ *
+ * Rainbow is the visible gold-glow state, and it is a stat-card-only thing: it
+ * needs the card to be sitting on the facility it specialises in, with a full
+ * bond gauge. A card with no specialty can never show it.
+ */
 export function isRainbow(card: PlacedCard, facility: Stat): boolean {
-  return card.stat === facility && card.bond >= 80;
+  return cardKind(card) === "stat" && card.stat === facility && card.bond >= RAINBOW_BOND;
+}
+
+/**
+ * Is this card contributing its friendship bonus to this training?
+ *
+ * This is DELIBERATELY not the same question as `isRainbow`, and collapsing the
+ * two is the bug this function exists to prevent.
+ *
+ * What master.mdb says, measured across all 235 cards:
+ *
+ *   - stat cards   command_id 101-106, friendship_bonus on 223/223
+ *   - friend cards command_id 0,       friendship_bonus on   0/10
+ *   - group cards  command_id 0,       friendship_bonus on   2/2
+ *
+ * So a group card carries a real friendship bonus (Heirs to the Throne 10 -> 35%,
+ * Team Sirius 5 -> 15%) while having no facility to match against. Under the old
+ * `card.stat === facility` test that bonus could never fire, on any facility,
+ * ever -- the card was extracted, stored, placed, and then silently ignored by
+ * the only term that made it worth playing.
+ *
+ * UNVERIFIED, and flagged as such in `assumptions`: master.mdb stores the value
+ * but not the condition, so "a group card's friendship bonus applies at bond 80
+ * on whichever facility it lands on" is the modelling choice, not a decoded
+ * fact. It is the reading that makes the extracted number mean anything -- a
+ * bonus with no facility that can ever satisfy it would be dead data -- but the
+ * alternative (it applies unconditionally, with no bond gate) predicts a
+ * measurably different curve early in a career. A single logged run with a group
+ * card in the deck separates them, which is why `GROUP_FRIENDSHIP_ASSUMPTION` is
+ * a named string rather than a comment.
+ */
+export function contributesFriendship(card: PlacedCard, facility: Stat): boolean {
+  const kind = cardKind(card);
+  if (kind === "stat") return card.stat === facility && card.bond >= RAINBOW_BOND;
+  // Friend cards genuinely have no friendship bonus in the data, so this is
+  // only ever true for a group card -- but it is written as a bond test rather
+  // than a kind test so a friend card with a nonzero curve would not be dropped.
+  if (kind === "group") return card.bond >= RAINBOW_BOND;
+  return false;
+}
+
+export const GROUP_FRIENDSHIP_ASSUMPTION =
+  "a group card's friendship bonus is modelled as applying at bond >= 80 on " +
+  "whichever facility it lands on; master.mdb stores the value but not the " +
+  "condition, so this is unverified and needs a logged run with a group card";
+
+/**
+ * A card's effects with its bond-gated unique effect folded in.
+ *
+ * `support_card_unique_effect` type 101 is a conditional: at bond N, add M to
+ * effect T. Team Sirius gets training_effectiveness +10 at bond 80 this way,
+ * which is larger than most of its base curve.
+ */
+export function effectiveEffects(card: PlacedCard): CardEffects {
+  const gated = card.bondThresholdEffects;
+  if (!gated || gated.length === 0) return card.effects;
+  const out: CardEffects = { ...card.effects };
+  for (const g of gated) {
+    if (card.bond < g.bondAtLeast) continue;
+    out[g.effect] = (out[g.effect] ?? 0) + g.amount;
+  }
+  return out;
 }
 
 export function computeTraining(input: TrainingInput): TrainingResult {
@@ -205,31 +313,53 @@ export function computeTraining(input: TrainingInput): TrainingResult {
   //
   // Song bonuses are additive on the base, exactly like a card's stat bonus,
   // and they apply on every facility rather than only where a card sits.
+  // Fold each card's bond-gated unique effect into its effect values ONCE, so
+  // every term below reads the same numbers.
+  const resolvedEffects = new Map<PlacedCard, CardEffects>();
+  for (const card of cards) resolvedEffects.set(card, effectiveEffects(card));
+  const eff = (card: PlacedCard): CardEffects => resolvedEffects.get(card)!;
+
+  for (const card of cards) {
+    if ((card.bondThresholdEffects?.length ?? 0) > 0 && card.bond >= 80) {
+      assumptions.push(
+        `card ${card.cardId} bond-threshold unique effect is applied; the type-101 ` +
+        `decode is inferred from the row shape, not decoded from the game`,
+      );
+    }
+  }
+
   const baseVec: StatVector = { ...ZERO_STATS };
   const statBonus: StatVector = { ...ZERO_STATS };
   for (const stat of STATS) {
     baseVec[stat] = (base as Record<string, number>)[stat] ?? 0;
     for (const card of cards) {
-      statBonus[stat] += card.effects[STAT_BONUS_KEY[stat]] ?? 0;
+      statBonus[stat] += eff(card)[STAT_BONUS_KEY[stat]] ?? 0;
     }
     statBonus[stat] += songBonuses[stat] ?? 0;
   }
 
-  // --- term 2: friendship, multiplicative across rainbow cards -------------
+  // --- term 2: friendship, multiplicative across contributing cards --------
+  //
+  // NOT the same set as "cards showing rainbow". A group card has no facility,
+  // so it never shows the rainbow glow, but it does carry a friendship bonus --
+  // see contributesFriendship() for the measurement and the open question.
   let friendship = 1;
+  let groupFriendshipUsed = false;
   for (const card of cards) {
-    if (!isRainbow(card, facility)) continue;
-    friendship *= 1 + (card.effects.friendship_bonus ?? 0) / 100;
+    if (!contributesFriendship(card, facility)) continue;
+    friendship *= 1 + (eff(card).friendship_bonus ?? 0) / 100;
+    if (cardKind(card) === "group") groupFriendshipUsed = true;
   }
+  if (groupFriendshipUsed) assumptions.push(GROUP_FRIENDSHIP_ASSUMPTION);
 
   // --- term 3: mood --------------------------------------------------------
   let moodEffectSum = 0;
-  for (const card of cards) moodEffectSum += card.effects.mood_effect ?? 0;
+  for (const card of cards) moodEffectSum += eff(card).mood_effect ?? 0;
   const moodTerm = 1 + MOOD_VALUES[mood] * (1 + moodEffectSum / 100);
 
   // --- term 4: training effectiveness --------------------------------------
   let trainingEff = 0;
-  for (const card of cards) trainingEff += card.effects.training_effectiveness ?? 0;
+  for (const card of cards) trainingEff += eff(card).training_effectiveness ?? 0;
   const effTerm = 1 + trainingEff / 100;
 
   // --- term 5: card count --------------------------------------------------
@@ -250,7 +380,7 @@ export function computeTraining(input: TrainingInput): TrainingResult {
   }
 
   let skillPoints = (base.skill_points ?? 0) + songSkillPointBonus;
-  for (const card of cards) skillPoints += card.effects.skill_point_bonus ?? 0;
+  for (const card of cards) skillPoints += eff(card).skill_point_bonus ?? 0;
 
   return {
     gains,
@@ -266,6 +396,8 @@ export function computeTraining(input: TrainingInput): TrainingResult {
       cardCount: countTerm,
       growth: growthRate,
       songBonus: songBonuses,
+      rainbowCards: cards.filter((c) => isRainbow(c, facility)).length,
+      friendshipCards: cards.filter((c) => contributesFriendship(c, facility)).length,
     },
     assumptions,
   };

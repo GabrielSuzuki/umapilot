@@ -94,6 +94,17 @@ check("COMMAND_ID_TO_STAT maps onto the five stats, one each",
 
 # --- support cards ---------------------------------------------------------
 
+check("group cards are their own card type, distinct from friend cards",
+      E.SUPPORT_CARD_TYPE[E.SUPPORT_CARD_TYPE_GROUP] == "group"
+      and E.SUPPORT_CARD_TYPE_GROUP != E.SUPPORT_CARD_TYPE_FRIEND,
+      "a group card has no facility like a friend card but DOES carry a "
+      "friendship bonus; collapsing the two drops that bonus silently")
+check("the bond-threshold unique effect id is not a normal effect type",
+      E.UNIQUE_EFFECT_BOND_THRESHOLD not in E.SUPPORT_EFFECT_TYPES,
+      "type_0 101 is a conditional wrapper, not an effect in its own right")
+check("chara names come from a chara-keyed text category, not a card-keyed one",
+      E.TEXT_CHARA_NAME != E.TEXT_CARD_CHARA_NAME,
+      f"chara ids -> cat {E.TEXT_CHARA_NAME}, card ids -> cat {E.TEXT_CARD_CHARA_NAME}")
 check("support card types are distinct",
       len(set(E.SUPPORT_CARD_TYPE.values())) == len(E.SUPPORT_CARD_TYPE))
 

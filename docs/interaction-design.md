@@ -125,11 +125,14 @@ than a scoring heuristic.
 ### Recreation is a choice of companion, not of venue
 
 An earlier draft of this document had it wrong. The Recreation screen offers the
-**trainee alone or a friend support card** — the venue is the game's choice, not
-the player's.
+**trainee alone, or a support card** — the venue is the game's choice, not the
+player's.
 
-Going with a friend advances that card's **event chain**, shown as chevrons
-("Event Progress"). Every friend in `master.mdb` has one:
+Going with a companion advances an **event chain**, shown as chevrons ("Event
+Progress"). There are two different structures behind those chevrons, and
+conflating them was a real bug.
+
+**Friend cards own one ordered chain**, keyed by chara id:
 
 | friend | steps |
 |---|---:|
@@ -140,18 +143,41 @@ Going with a friend advances that card's **event chain**, shown as chevrons
 | **Sasami Anshinzawa** | **3** |
 
 **They are not all the same length.** A planner that assumes five would over-book
-two turns on a Sasami run.
+two turns.
+
+**Group cards are a bundle**, keyed by card id. `support_card_group` lists the
+characters packed into the card, each with its own independent one-step outing,
+*plus* the card owns a short chain of its own:
+
+| group card | members | card chain | total outings |
+|---|---:|---:|---:|
+| [Esteemed and Adored] Heirs to the Throne | 3 | 2 | **5** |
+| [Passing the Dream On] Team Sirius | 6 | 1 | **7** |
+
+Team Sirius is the largest standing turn commitment of any companion in the
+game — seven turns against Light Hello's five — and none of that is visible from
+its chain length, which is 1. **The chain is not the schedule.**
+
+Three independent tables agree on those counts, so the extractor asserts them
+rather than trusting any one: `support_card_data.outing_max` (the card's own
+chain), `support_card_group` (one row per member), and `single_mode_story_data`
+(one progress row per outing). The first version of that check assumed every
+"1 of 1" story row was a member outing, and died on Team Sirius — whose card
+chain is *also* one step, and therefore indistinguishable from a member outing by
+progress value. Only the total is checkable; the split is not.
 
 This is a **deadline-constrained scheduling problem**, structurally identical to
-the song unlock gates: five outings must fit somewhere in 72 turns, each one
-displaces a training, and the payoff only lands when the chain completes. It is
-precisely the case a myopic recommender gets wrong — a single friend outing looks
-like a wasted turn right up until the chain pays out.
+the song unlock gates: the outings have to fit somewhere in 72 turns, and each
+one displaces a training. Run every companion in the dataset and the bill is 35
+turns — nearly half a career — so which companions to take is itself a planning
+decision rather than a given.
 
-So the engine tracks progress per friend and exposes `friendChainStatus()`,
-which reports remaining steps against turns left and flags a chain that has
-become infeasible. A planner has to *reserve* those turns, not discover at turn
-68 that it owes four outings it can no longer afford.
+**The two kinds fail differently, and a planner must not treat them alike.** A
+friend chain is ordered and pays out at the end, so abandoning it part-way wastes
+every turn already spent — a real cliff. A group card's member outings are
+independent one-step events, so an unfinished group card has merely left value on
+the table. `friendChainStatus()` reports that as `allOrNothing`, alongside
+remaining outings against turns left and a `feasible` flag.
 
 The venue still matters for the immediate payoff, and `master.mdb` names them:
 
@@ -165,6 +191,57 @@ The venue still matters for the immediate payoff, and `master.mdb` names them:
 Per-step chain **rewards** are not in `master.mdb` — like all event outcomes they
 live in the story assets (see `events.md`). The structure is extracted, which is
 what the scheduler needs; the payouts are flagged as unmodelled.
+
+### Group cards are the awkward third kind, and the deck screen must know it
+
+There are exactly two in the game, and they behave like neither of the other
+kinds. Measured across all 235 cards in `master.mdb`:
+
+| kind | `command_id` | carries `friendship_bonus` | in `support_card_group` |
+|---|---|---:|---|
+| stat | 101–106 | 223/223 | no |
+| friend | 0 | **0/10** | no |
+| group | 0 | **2/2** | **yes** |
+
+A group card has **no facility specialty**, so it can never show the rainbow
+glow — but it **does** carry a real friendship bonus (Heirs to the Throne 10 →
+35%, Team Sirius 5 → 15%). The engine's friendship term used to test
+`card.stat === facility`, which no group card can ever satisfy on any facility.
+The card was extracted, stored, placed on a facility each turn, and then silently
+ignored by the one term that made it worth playing. It failed as a slightly low
+projection, which is the worst way for a model to be wrong.
+
+So `isRainbow()` (does it glow?) and `contributesFriendship()` (does the
+multiplier apply?) are now **different questions**, and `PlacedCard` carries an
+explicit `kind` — because a friend card and a group card both have `stat: null`
+and cannot be told apart any other way.
+
+Both group cards also carry a **bond-80 unique effect** that the model previously
+left as an undecoded blob. `support_card_unique_effect.type_0 = 101` is a
+conditional wrapper — *at bond N, add M to effect T* — and the shape is consistent
+across all 17 cards that use it. Team Sirius's is worth
+`training_effectiveness +10`, larger than most of its base curve.
+
+**Still unverified:** `master.mdb` stores a group card's friendship bonus but not
+its *condition*. The model applies it at bond ≥ 80 on whichever facility the card
+lands on, which is the reading that makes the extracted number mean anything — a
+bonus with no facility that could ever satisfy it would be dead data. The
+alternative (no bond gate at all) predicts a measurably different curve early in
+a career. One logged run with a group card in the deck separates them, and the
+projection says so in its `assumptions` until then.
+
+### One open question worth a single in-game look
+
+`single_mode_restrict_support` holds exactly two rows, both for **Team Sirius**,
+against Unity Cup and **Grand Concert**. The schema does not say whether
+"restrict" means *banned from* or *exclusive to*, and with one card in the table
+there is no second example to disambiguate against. Both readings change a deck
+recommendation, and getting it backwards would be worse than saying nothing.
+
+The dataset therefore carries the rows with `semantics: "unknown"`, and
+`restrictedCards()` surfaces the fact without deciding. **Open a Grand Concert
+run and see whether Team Sirius is selectable** — that settles it in one look,
+and is the only thing blocking this from being modelled properly.
 
 ### What is still missing for races
 

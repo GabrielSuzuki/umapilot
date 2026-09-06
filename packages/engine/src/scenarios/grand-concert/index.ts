@@ -22,6 +22,32 @@ import {
 } from "./training";
 import type { RunState, TurnAction, ShopAction, Scenario } from "../../scenario";
 
+/** The Grand Concert scenario id in master.mdb. */
+const GRAND_CONCERT_SCENARIO_ID = 3;
+
+/** An outing chain as the extractor emits it. */
+interface RawOutingChain {
+  kind?: "friend" | "group";
+  charaId?: number;
+  cardId?: number;
+  name?: string;
+  totalSteps: number;
+  totalOutings?: number;
+  memberOutings?: unknown[];
+}
+
+/** An outing chain normalised for scheduling. */
+interface OutingChain {
+  /** Friend: chara id. Group: card id. */
+  companionId: number;
+  kind: "friend" | "group";
+  name?: string | undefined;
+  /** Turns this companion will cost over the whole career. */
+  totalOutings: number;
+  /** Group cards only: how many bundled characters have their own outing. */
+  memberCount: number;
+}
+
 // ---------------------------------------------------------------------------
 // Scenario-specific state
 // ---------------------------------------------------------------------------
@@ -38,7 +64,14 @@ export interface CardState {
    * the game -- so the omission compounded over an entire career.
    */
   bond: number;
+  /**
+   * "stat" | "friend" | "group". A friend card and a group card both have
+   * `stat: null`, so this cannot be inferred -- and a group card that omits it
+   * loses its friendship bonus silently. See contributesFriendship().
+   */
+  kind?: PlacedCard["kind"];
   effects: PlacedCard["effects"] & { initial_friendship?: number };
+  bondThresholdEffects?: PlacedCard["bondThresholdEffects"];
 }
 
 export interface GrandConcertState {
@@ -57,11 +90,17 @@ export interface GrandConcertState {
   placement: Record<Stat, number[]>;
   growthRate: Partial<Record<Stat, number>>;
   /**
-   * Friend outing chain progress, keyed by the friend's chara id.
+   * Recreation outing progress, keyed by companion id -- a friend card's CHARA
+   * id, or a group card's CARD id (group outings are keyed by card in
+   * master.mdb, because the card bundles several characters).
    *
-   * Deadline-constrained: the remaining steps have to fit in the turns left, and
-   * each one displaces a training. The planner has to reserve those turns rather
-   * than discover at turn 68 that it needs four more outings.
+   * Deadline-constrained: the remaining outings have to fit in the turns left,
+   * and each one displaces a training. The planner has to reserve those turns
+   * rather than discover at turn 68 that it needs four more outings.
+   *
+   * Group cards make this materially harder. Team Sirius owes SEVEN outings
+   * (six members plus its own one-step chain) against Light Hello's five, so a
+   * deck with a group card in it has a much larger standing turn commitment.
    */
   friendEventProgress: Record<number, number>;
   /** Everything the projection rests on that has not been verified. */
@@ -97,7 +136,7 @@ export class GrandConcertScenario
 
   private readonly facilityTable: FacilityTable;
   private readonly failureRateBase: Record<string, Record<string, number>>;
-  private readonly friendChains: Array<{ charaId: number; totalSteps: number }>;
+  private readonly outingChains: OutingChain[];
   private readonly otherCommands: Record<string, {
     name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
   }>;
@@ -124,9 +163,25 @@ export class GrandConcertScenario
     this.facilityTable = training.facilities;
     this.failureRateBase = training.failureRateBase ?? {};
     this.otherCommands = training.otherCommands ?? {};
-    this.friendChains =
-      (dataset as unknown as { friendEvents?: Array<{ charaId: number; totalSteps: number }> })
-        .friendEvents ?? [];
+    // Prefer `outingChains`, which covers group cards as well as friends.
+    // `friendEvents` is the older key and holds only the friend subset, so an
+    // older dataset still loads -- with group outings missing rather than wrong.
+    const ds = dataset as unknown as {
+      outingChains?: RawOutingChain[];
+      friendEvents?: RawOutingChain[];
+    };
+    const raw = ds.outingChains ?? ds.friendEvents ?? [];
+    this.outingChains = raw.map((o) => ({
+      // A friend chain is keyed by chara id; a group card's outings are keyed by
+      // card id, because the card bundles several characters.
+      companionId: o.kind === "group" ? o.cardId! : o.charaId!,
+      kind: o.kind ?? "friend",
+      name: o.name,
+      // What actually has to be scheduled: for a group card that is every
+      // member's outing PLUS the card's own chain, not just the chain.
+      totalOutings: o.totalOutings ?? o.totalSteps,
+      memberCount: o.memberOutings?.length ?? 0,
+    }));
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
   }
 
@@ -166,7 +221,7 @@ export class GrandConcertScenario
         placement: { speed: [], stamina: [], power: [], guts: [], wit: [] },
         growthRate: this.setup.growthRate ?? {},
         friendEventProgress: Object.fromEntries(
-          this.friendChains.map((f) => [f.charaId, 0]),
+          this.outingChains.map((f) => [f.companionId, 0]),
         ),
         assumptions: [],
       },
@@ -268,16 +323,17 @@ export class GrandConcertScenario
             "the destinations master.mdb offers, which range from +0 to +40 energy");
         }
 
-        // Going with a friend advances their chain.
+        // Going with a companion advances their outings. `companionCharaId` is
+        // a friend's chara id or a group card's card id.
         if (action.companionCharaId !== undefined) {
-          const chain = this.friendChains.find((f) => f.charaId === action.companionCharaId);
+          const chain = this.outingChains.find((f) => f.companionId === action.companionCharaId);
           if (chain) {
-            const now = s.friendEventProgress[chain.charaId] ?? 0;
-            if (now < chain.totalSteps) {
-              s.friendEventProgress[chain.charaId] = now + 1;
+            const now = s.friendEventProgress[chain.companionId] ?? 0;
+            if (now < chain.totalOutings) {
+              s.friendEventProgress[chain.companionId] = now + 1;
               addAssumption(s,
-                "friend outing chain rewards are not modelled -- the step is " +
-                "tracked, but its payout lives in the story assets, not master.mdb");
+                "outing rewards are not modelled -- the step is tracked, but its " +
+                "payout lives in the story assets, not master.mdb");
             }
           }
         }
@@ -337,7 +393,20 @@ export class GrandConcertScenario
     const s = state.scenario;
     return s.placement[facility].map((idx) => {
       const c = s.cards[idx]!;
-      return { cardId: c.cardId, bond: c.bond, stat: c.stat, effects: c.effects };
+      // `kind` and `bondThresholdEffects` MUST be forwarded. Dropping `kind`
+      // here would make every group card look like a friend card to
+      // contributesFriendship(), which is precisely the bug this plumbing exists
+      // to prevent -- and it would fail silently, as a slightly low projection.
+      return {
+        cardId: c.cardId,
+        bond: c.bond,
+        stat: c.stat,
+        ...(c.kind !== undefined ? { kind: c.kind } : {}),
+        effects: c.effects,
+        ...(c.bondThresholdEffects !== undefined
+          ? { bondThresholdEffects: c.bondThresholdEffects }
+          : {}),
+      };
     });
   }
 
@@ -443,23 +512,76 @@ export class GrandConcertScenario
   }
 
   /**
-   * Friend chain steps still outstanding, and whether they still fit.
+   * Outings still outstanding per companion, and whether they still fit.
    *
    * Surfaced so a planner can reserve turns rather than discover at turn 68 that
    * it owes four outings it can no longer afford.
+   *
+   * `remaining` counts OUTINGS, not chain steps, which is the number that
+   * matters for scheduling and the two differ for group cards: Team Sirius's
+   * "chain" is one step, but playing it out costs seven turns.
+   *
+   * The two kinds also fail differently. A friend chain is ordered and pays out
+   * at the end, so running out of turns wastes every outing already spent. A
+   * group card's member outings are independent one-step events, so an
+   * unfinished group card has simply left value on the table -- no cliff. A
+   * planner should not treat the two deadlines as equally hard.
    */
   friendChainStatus(state: GcRunState): Array<{
-    charaId: number; done: number; total: number; remaining: number; turnsLeft: number; feasible: boolean;
+    charaId: number;
+    kind: "friend" | "group";
+    name?: string | undefined;
+    done: number;
+    total: number;
+    remaining: number;
+    turnsLeft: number;
+    feasible: boolean;
+    /** True when abandoning it part-way wastes the outings already spent. */
+    allOrNothing: boolean;
   }> {
     const turnsLeft = this.dataset.constants.careerTurns - state.turn + 1;
-    return this.friendChains.map((f) => {
-      const done = state.scenario.friendEventProgress[f.charaId] ?? 0;
-      const remaining = Math.max(0, f.totalSteps - done);
+    return this.outingChains.map((f) => {
+      const done = state.scenario.friendEventProgress[f.companionId] ?? 0;
+      const remaining = Math.max(0, f.totalOutings - done);
       return {
-        charaId: f.charaId, done, total: f.totalSteps, remaining, turnsLeft,
+        charaId: f.companionId,
+        kind: f.kind,
+        name: f.name,
+        done,
+        total: f.totalOutings,
+        remaining,
+        turnsLeft,
         feasible: remaining <= turnsLeft,
+        allOrNothing: f.kind === "friend",
       };
     });
+  }
+
+  /**
+   * Support cards in this deck that `single_mode_restrict_support` ties to this
+   * scenario -- currently only Team Sirius, against Grand Concert.
+   *
+   * master.mdb does not say whether "restrict" means banned from or exclusive
+   * to, so this reports the fact and refuses to decide. A deck screen should
+   * show it and ask; silently dropping the card, or silently keeping it, both
+   * risk being exactly wrong.
+   */
+  restrictedCards(): Array<{ cardId: number; cardName?: string | undefined; semantics: string }> {
+    const r = (this.dataset as unknown as {
+      scenarioRestrictions?: {
+        rows?: Array<{ scenarioId: number; cardId: number; cardName?: string }>;
+        semantics?: string;
+      };
+    }).scenarioRestrictions;
+    if (!r?.rows) return [];
+    const deck = new Set(this.setup.cards.map((c) => c.cardId));
+    return r.rows
+      .filter((row) => row.scenarioId === GRAND_CONCERT_SCENARIO_ID && deck.has(row.cardId))
+      .map((row) => ({
+        cardId: row.cardId,
+        cardName: row.cardName,
+        semantics: r.semantics ?? "unknown",
+      }));
   }
 
   private growBonds(s: GrandConcertState, facility: Stat): void {

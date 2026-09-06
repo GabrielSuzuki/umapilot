@@ -49,8 +49,21 @@ TEXT_SKILL_NAME = 47
 TEXT_SKILL_DESC = 48
 TEXT_SUPPORT_CARD_FULL = 75   # "[Tracen Academy] Special Week"
 TEXT_SUPPORT_CARD_TITLE = 76  # "[Tracen Academy]"
-TEXT_CHARA_NAME = 77          # "Special Week"
 TEXT_COMMAND_NAME = 55        # command_id -> "Speed" / "Power" / ...
+
+# Character names, keyed by CHARA id (1001 Special Week ... 9008 Light Hello).
+#
+# BUG FIXED 2026-09-06: this was 77, which is keyed by SUPPORT CARD id
+# (10001..30159), not chara id. `text(77, chara_id)` therefore missed on every
+# single card and `charaName` was null throughout the dataset -- silently, because
+# a missing text lookup returns None rather than failing. Category 6 is the real
+# chara-name table (indices 1001..9042, covering trainees and NPCs alike), and
+# group card members are identified by chara id, which is how this surfaced.
+#
+# Category 77 is kept below as an independent cross-check: for a given card it
+# must agree with category 6 looked up by that card's chara_id.
+TEXT_CHARA_NAME = 6           # chara_id  -> "Special Week"
+TEXT_CARD_CHARA_NAME = 77     # card_id   -> "Special Week"
 
 # support_card_data.command_id -> the stat its training boosts.
 #
@@ -62,6 +75,44 @@ COMMAND_ID_TO_STAT = {101: "speed", 102: "power", 103: "guts", 105: "stamina", 1
 
 # support_card_data.support_card_type
 SUPPORT_CARD_TYPE = {1: "stat", 2: "friend", 3: "group"}
+SUPPORT_CARD_TYPE_STAT = 1
+SUPPORT_CARD_TYPE_FRIEND = 2
+SUPPORT_CARD_TYPE_GROUP = 3
+
+# What actually separates the three kinds, measured across all 235 cards rather
+# than taken from a wiki:
+#
+#   kind    command_id   friendship_bonus   specialty_priority   support_card_group
+#   stat    101..106     223/223            173/223              no
+#   friend  0              0/10               0/10               no
+#   group   0              2/2                0/2                YES
+#
+# So a group card is a HYBRID, and that is the whole point of tracking it
+# separately: it has no facility specialty (command_id 0, like a friend card), so
+# it can never rainbow in the stat-card sense -- but it DOES carry a friendship
+# bonus curve (like a stat card), which a model keyed on "card.stat === facility"
+# silently throws away. Both group cards also carry a bond-threshold unique
+# effect (see UNIQUE_EFFECT_BOND_THRESHOLD).
+#
+# The other thing only group cards have is membership: `support_card_group` lists
+# the characters bundled into the card, each with its own recreation outing.
+
+# support_card_unique_effect.type_0. Value 101 is not an effect id; it is a
+# CONDITIONAL wrapper, and the shape is consistent across all 17 cards that use
+# it: (value_0 = bond threshold, value_0_1 = an effect type id from
+# SUPPORT_EFFECT_TYPES, value_0_2 = the amount to add), optionally repeated in
+# value_0_3 / value_0_4.
+#
+#   30101  (100, 1, 20)   at bond 100, friendship_bonus +20
+#   30089  (100, 2, 60)   at bond 100, mood_effect +60
+#   30081  ( 80, 8, 10)   at bond  80, training_effectiveness +10   <- group card
+#   30067  ( 80, 30, 2)   at bond  80, skill_point_bonus +2         <- group card
+#
+# Every value_0_1 seen falls inside SUPPORT_EFFECT_TYPES and every value_0 is 80
+# or 100, which is strong structural evidence -- but it is INFERRED from the
+# shape, not decoded from the game, so decoded rows carry verified: false and the
+# raw row is kept alongside.
+UNIQUE_EFFECT_BOND_THRESHOLD = 101
 
 SUPPORT_RARITY = {1: "R", 2: "SR", 3: "SSR"}
 
@@ -275,6 +326,9 @@ class Extractor:
         uri = f"file:{mdb_path.as_posix()}?mode=ro"
         self.db = sqlite3.connect(uri, uri=True)
         self._text_cache: dict[tuple[int, int], str] = {}
+        # Cards where the card-keyed and chara-keyed name tables disagree.
+        # Reported at the end of a run; see support_cards().
+        self.name_variants: list[dict] = []
 
     # -- helpers ---------------------------------------------------------
 
@@ -428,13 +482,37 @@ class Extractor:
         uniques: dict[int, list[dict]] = {}
         for row in self.db.execute("SELECT * FROM support_card_unique_effect"):
             uid, lv = row[0], row[1]
-            uniques.setdefault(uid, []).append({"level": lv, "raw": list(row[2:])})
+            uniques.setdefault(uid, []).append({
+                "level": lv,
+                "raw": list(row[2:]),
+                # type_0 at row[2], then value_0..value_0_4 at row[3:8].
+                "bondThreshold": self._decode_bond_threshold(row[2], row[3:8]),
+            })
+
+        # chara ids bundled into each group card
+        group_members: dict[int, list[dict]] = {}
+        for card_id, member_chara, outings in self.db.execute(
+            "SELECT support_card_id, chara_id, outing_max FROM support_card_group "
+            "ORDER BY support_card_id, id"
+        ):
+            group_members.setdefault(card_id, []).append({
+                "charaId": member_chara,
+                "name": self.strip_markup(self.text(TEXT_CHARA_NAME, member_chara)),
+                "outings": outings,
+            })
+
+        restricted: dict[int, list[int]] = {}
+        for scenario_id, card_id in self.db.execute(
+            "SELECT scenario_id, support_card_id FROM single_mode_restrict_support"
+        ):
+            restricted.setdefault(card_id, []).append(scenario_id)
 
         out = []
         for (cid, chara_id, rarity, effect_table_id, unique_effect_id,
-             command_id, card_type) in self.db.execute(
+             command_id, card_type, outing_max) in self.db.execute(
             "SELECT id, chara_id, rarity, effect_table_id, unique_effect_id, "
-            "command_id, support_card_type FROM support_card_data ORDER BY id"
+            "command_id, support_card_type, outing_max FROM support_card_data "
+            "ORDER BY id"
         ):
             kind = SUPPORT_CARD_TYPE.get(card_type, f"unknown_{card_type}")
             # Only stat cards sit on a training facility; friend/group cards do not.
@@ -447,17 +525,87 @@ class Extractor:
                 name = SUPPORT_EFFECT_TYPES.get(etype, f"unknown_{etype}")
                 effects[name] = curve
 
+            # Two independent chara-name lookups: category 77 keyed by CARD id
+            # (the name the card itself shows) and category 6 keyed by CHARA id
+            # (the only one that works for a group card's members, who have no
+            # card of their own).
+            #
+            # They mostly agree. Where they do not, it is a naming VARIANT rather
+            # than a misidentified table -- chara 9004 is "Trainer Kiryuin" in
+            # category 6 but her cards all read "Aoi Kiryuin". So the card-keyed
+            # name wins for a card, the chara-keyed name is kept alongside, and
+            # the disagreement is reported at the end of the run rather than
+            # being either hidden or treated as fatal.
+            by_chara = self.strip_markup(self.text(TEXT_CHARA_NAME, chara_id))
+            by_card = self.strip_markup(self.text(TEXT_CARD_CHARA_NAME, cid))
+            chara_name = by_card or by_chara
+            if by_card and by_chara and by_card != by_chara:
+                self.name_variants.append(
+                    {"cardId": cid, "charaId": chara_id,
+                     "byCard": by_card, "byChara": by_chara})
+            if chara_name is None:
+                die(f"card {cid} has no chara name for chara_id {chara_id} in "
+                    f"text_data category {TEXT_CHARA_NAME} or {TEXT_CARD_CHARA_NAME}")
+
+            members = group_members.get(cid, [])
+            if kind == "group" and not members:
+                die(f"group card {cid} has no support_card_group rows")
+            if kind != "group" and members:
+                die(f"card {cid} is {kind} but has support_card_group rows")
+
             out.append({
                 "id": cid,
                 "charaId": chara_id,
                 "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, cid)),
                 "title": self.strip_markup(self.text(TEXT_SUPPORT_CARD_TITLE, cid)),
-                "charaName": self.strip_markup(self.text(TEXT_CHARA_NAME, chara_id)),
+                "charaName": chara_name,
+                "charaNameById": by_chara,
                 "rarity": SUPPORT_RARITY.get(rarity, f"unknown_{rarity}"),
                 "kind": kind,
                 "stat": stat,
                 "effects": effects,
                 "uniqueEffect": uniques.get(unique_effect_id, []),
+                # Group cards only: the characters bundled into the card, each
+                # with an independent recreation outing.
+                "groupMembers": members,
+                # The card's OWN outing chain length. For a friend card this is
+                # the whole chain; for a group card it is separate from, and
+                # additional to, the per-member outings above.
+                "outingMax": outing_max,
+                "totalOutings": outing_max + sum(m["outings"] for m in members),
+                # Scenario ids this card appears against in
+                # single_mode_restrict_support. Semantics unresolved -- see
+                # scenario_restrictions().
+                "restrictedScenarios": sorted(restricted.get(cid, [])),
+            })
+        return out
+
+    @staticmethod
+    def _decode_bond_threshold(type_0: int, values: tuple) -> list[dict]:
+        """Decode a unique effect of type 101 into bond-gated effect bumps.
+
+        See UNIQUE_EFFECT_BOND_THRESHOLD for the evidence. Returns [] for every
+        other type_0 rather than guessing at effects it cannot read -- an
+        undecoded unique effect stays in `raw` where it is visibly undecoded,
+        which is the point.
+        """
+        if type_0 != UNIQUE_EFFECT_BOND_THRESHOLD:
+            return []
+        threshold = values[0]
+        out = []
+        # (effect type, amount) pairs follow the threshold.
+        for etype, amount in ((values[1], values[2]), (values[3], values[4])):
+            if not etype or not amount:
+                continue
+            name = SUPPORT_EFFECT_TYPES.get(etype)
+            if name is None:
+                # Do not invent a name; surface the id so it is obviously unknown.
+                name = f"unknown_{etype}"
+            out.append({
+                "bondAtLeast": threshold,
+                "effect": name,
+                "amount": amount,
+                "verified": False,
             })
         return out
 
@@ -593,23 +741,47 @@ class Extractor:
                     "interpolate silently.",
         }
 
-    def friend_events(self) -> list[dict]:
-        """Friend outing chains.
+    def outing_chains(self) -> list[dict]:
+        """Recreation outings, for both friend cards and GROUP cards.
 
-        Recreation is a choice of COMPANION, not of venue: the screen offers the
-        trainee or a friend support card, and going with a friend advances a
-        bounded event chain shown as chevrons ("Event Progress"). Completing the
-        chain before the career ends is a real objective, and each step costs a
-        turn that could have been a training -- so it is a deadline-constrained
+        Recreation is a choice of COMPANION, not of venue. Taking a companion
+        advances a bounded event chain shown as chevrons ("Event Progress").
+        Each step costs a turn that could have been a training, and the payoff
+        only lands when a step fires -- so this is a deadline-constrained
         scheduling problem, the same shape as the song unlock gates.
 
-        Chain length is NOT uniform: Sasami Anshinzawa has three steps where the
-        others have five. A planner that assumes five would over-book two turns.
+        Two DIFFERENT structures live in the same table, and conflating them was
+        a real bug:
 
-        The per-step REWARDS are not here -- like all event outcomes they live in
-        the story assets (see events.md). What is extractable is the structure,
-        which is what the scheduler actually needs.
+        * A **friend card** (`support_card_type` 2) owns ONE ordered chain, keyed
+          by `support_chara_id`. Length is not uniform -- Sasami Anshinzawa has
+          three steps where the others have five.
+
+        * A **group card** (`support_card_type` 3) is a BUNDLE of characters
+          (`support_card_group`), and its rows are keyed by `support_card_id`
+          instead. Each member has its own INDEPENDENT one-step outing, plus the
+          card owns a short chain of its own. So Team Sirius is six member
+          outings plus a one-step card chain = seven, and Heirs to the Throne is
+          three plus two = five.
+
+        The original version of this method filtered on `support_chara_id > 0`,
+        which excluded every group card -- the query itself encoded the
+        assumption that companions are always NPCs.
+
+        Three independent sources agree on the counts, which is why they are
+        asserted rather than trusted:
+
+          1. `support_card_data.outing_max`   -- the card's own chain length
+          2. `support_card_group`             -- one row per member, outing_max 1
+          3. `single_mode_story_data`         -- one progress row per outing
+
+        The per-step REWARDS are not here. Like all event outcomes they live in
+        the story assets (see events.md); the structure is what the scheduler
+        needs, and the payouts are flagged unknown.
         """
+        out: list[dict] = []
+
+        # -- friend cards: one ordered chain keyed by chara id -----------------
         chains: dict[int, dict] = {}
         for chara_id, step, total in self.db.execute(
             "SELECT support_chara_id, show_progress_1, show_progress_2 "
@@ -626,22 +798,152 @@ class Extractor:
                 die(f"friend chara {chara_id} reports inconsistent chain lengths "
                     f"({total} vs {entry['totalSteps']})")
 
-        out = []
         for chara_id, entry in sorted(chains.items()):
             cards = [
-                {"id": cid, "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, cid))}
-                for (cid,) in self.db.execute(
-                    "SELECT id FROM support_card_data WHERE chara_id=? ORDER BY id",
-                    (chara_id,))
+                {"id": cid, "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, cid)),
+                 "outingMax": om}
+                for (cid, om) in self.db.execute(
+                    "SELECT id, outing_max FROM support_card_data "
+                    "WHERE chara_id=? ORDER BY id", (chara_id,))
             ]
+            # Cross-check: the card's own outing_max must equal the chain length
+            # read from the story table. These are separate tables maintained by
+            # separate pipelines; if they disagree, one of the two readings is
+            # wrong and neither should be shipped.
+            for card in cards:
+                if card["outingMax"] != entry["totalSteps"]:
+                    die(f"friend card {card['id']} has outing_max "
+                        f"{card['outingMax']} but chara {chara_id}'s story chain "
+                        f"has {entry['totalSteps']} steps")
+            # Prefer the name the cards themselves show. Category 6 calls chara
+            # 9004 "Trainer Kiryuin" where every one of her cards reads
+            # "Aoi Kiryuin", and the player sees the card.
+            display = (self.strip_markup(self.text(TEXT_CARD_CHARA_NAME, cards[0]["id"]))
+                       if cards else None)
             out.append({
                 **entry,
+                "kind": "friend",
+                "name": display or self.strip_markup(self.text(TEXT_CHARA_NAME, chara_id)),
                 "steps": sorted(set(entry["steps"])),
+                "memberOutings": [],
+                "totalOutings": entry["totalSteps"],
                 "cards": cards,
                 "rewardsKnown": False,
                 "note": "per-step rewards live in the story assets, not master.mdb",
             })
+
+        # -- group cards: a bundle of one-step member outings ------------------
+        for (card_id, chara_id, card_outing_max) in self.db.execute(
+            "SELECT id, chara_id, outing_max FROM support_card_data "
+            "WHERE support_card_type=? ORDER BY id", (SUPPORT_CARD_TYPE_GROUP,)
+        ):
+            members = [
+                {"charaId": mid,
+                 "name": self.strip_markup(self.text(TEXT_CHARA_NAME, mid)),
+                 "outings": om}
+                for (mid, om) in self.db.execute(
+                    "SELECT chara_id, outing_max FROM support_card_group "
+                    "WHERE support_card_id=? ORDER BY id", (card_id,))
+            ]
+            if not members:
+                die(f"group card {card_id} has no rows in support_card_group; "
+                    f"the group mechanic is not what this extractor assumes")
+
+            member_outings = sum(m["outings"] for m in members)
+
+            # The story table is keyed by support_card_id for group cards, and it
+            # holds one row per outing: the independent one-step member outings
+            # AND the card's own chain, mixed together.
+            #
+            # They cannot be told apart by progress value alone. A member outing
+            # reads "1 of 1", and so does the card's own chain when that chain
+            # happens to be one step long -- which is exactly the case for Team
+            # Sirius (6 members + a 1-step card chain = 7 rows that all read
+            # "1 of 1"). An earlier version of this check assumed every "1 of 1"
+            # row was a member and died on that card. The total is what is
+            # actually checkable; the split is not.
+            progress = self.db.execute(
+                "SELECT show_progress_1, show_progress_2 FROM single_mode_story_data "
+                "WHERE support_card_id=? AND show_progress_2 > 0", (card_id,)
+            ).fetchall()
+            card_chain = sorted({p[0] for p in progress if p[1] > 1})
+            card_chain_total = max((p[1] for p in progress if p[1] > 1), default=0)
+            expected = member_outings + card_outing_max
+
+            # Cross-check 1: support_card_group + support_card_data together
+            # account for every progress row in the story table.
+            if len(progress) != expected:
+                die(f"group card {card_id}: support_card_group has {member_outings} "
+                    f"member outings and support_card_data.outing_max is "
+                    f"{card_outing_max} ({expected} outings), but the story table "
+                    f"has {len(progress)} progress rows")
+            # Cross-check 2: a multi-step card chain must agree with
+            # support_card_data.outing_max on its length.
+            if card_chain_total and card_chain_total != card_outing_max:
+                die(f"group card {card_id} story chain is {card_chain_total} steps "
+                    f"but support_card_data.outing_max is {card_outing_max}")
+
+            out.append({
+                "kind": "group",
+                "cardId": card_id,
+                "charaId": chara_id,
+                "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, card_id)),
+                # The card's own chain, separate from the member outings.
+                "totalSteps": card_outing_max,
+                "steps": card_chain or [1],
+                "memberOutings": members,
+                # What a scheduler has to reserve turns for.
+                "totalOutings": member_outings + card_outing_max,
+                "cards": [{"id": card_id,
+                           "name": self.strip_markup(
+                               self.text(TEXT_SUPPORT_CARD_FULL, card_id)),
+                           "outingMax": card_outing_max}],
+                "rewardsKnown": False,
+                "note": "each member outing is independent (1 of 1), so unlike a "
+                        "friend chain there is no all-or-nothing completion cliff; "
+                        "per-outing rewards live in the story assets",
+            })
+
         return out
+
+    def scenario_restrictions(self) -> dict:
+        """Support cards that `single_mode_restrict_support` ties to a scenario.
+
+        SEMANTICS ARE NOT ESTABLISHED. The table holds exactly two rows, both for
+        [Passing the Dream On] Team Sirius (30081), against scenario 2 (Unity
+        Cup) and scenario 3 (GRAND CONCERT -- the scenario this project models).
+        The column names do not say whether "restrict" means
+
+            (a) this card is BANNED from those scenarios, or
+            (b) this card is only USABLE in those scenarios,
+
+        and with a single card in the table there is no second example to
+        disambiguate against. Both readings materially change a deck
+        recommendation, so the rows are emitted verbatim with the ambiguity
+        attached rather than resolved by guesswork. One look at the in-game
+        support selection screen during a Grand Concert run settles it.
+        """
+        rows = []
+        for _id, scenario_id, card_id in self.db.execute(
+            "SELECT id, scenario_id, support_card_id FROM single_mode_restrict_support "
+            "ORDER BY id"
+        ):
+            rows.append({
+                "scenarioId": scenario_id,
+                "scenarioName": self.strip_markup(
+                    self.text(TEXT_SCENARIO_NAME, scenario_id)),
+                "cardId": card_id,
+                "cardName": self.strip_markup(
+                    self.text(TEXT_SUPPORT_CARD_FULL, card_id)),
+            })
+        return {
+            "rows": rows,
+            "semantics": "unknown",
+            "note": "master.mdb does not say whether these cards are banned from "
+                    "the listed scenarios or exclusive to them; verify in game "
+                    "before acting on it",
+        }
+
 
     def sparks(self) -> dict:
         """Succession factors -- the sparks that drive the three inspirations.
@@ -875,10 +1177,14 @@ def main() -> None:
         "single_mode_training_effect",
         "single_mode_scenario",
         "card_rarity_data",
+        "single_mode_story_data",
+        "support_card_group",
+        "single_mode_restrict_support",
     ])
 
     techniques = ex.techniques()
-    friends = ex.friend_events()
+    outings = ex.outing_chains()
+    restrictions = ex.scenario_restrictions()
     songs = ex.songs()
     concerts = ex.concerts()
 
@@ -910,7 +1216,13 @@ def main() -> None:
             "careerTurns": max(c.turn for c in concerts),
         },
         "training": training,
-        "friendEvents": friends,
+        # Recreation companions: friend cards (one ordered chain each) and group
+        # cards (one independent outing per bundled member, plus a card chain).
+        "outingChains": outings,
+        # Kept under the old key so nothing downstream breaks on a rename; it is
+        # the friend subset of outingChains.
+        "friendEvents": [o for o in outings if o["kind"] == "friend"],
+        "scenarioRestrictions": restrictions,
         "concerts": [asdict(c) for c in concerts],
         "techniques": [asdict(t) for t in techniques],
         "songs": [asdict(s) for s in songs],

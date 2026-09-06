@@ -91,6 +91,69 @@ check("command_id -> stat mapping holds for four known cards",
 check("every card resolves a name", cards.supportCards.every((c: any) => !!c.name));
 check("friend and group cards carry no facility",
   cards.supportCards.filter((c: any) => c.kind !== "stat").every((c: any) => c.stat === null));
+check("charaName resolves on every card",
+  cards.supportCards.every((c: any) => !!c.charaName),
+  "text_data category 77 is keyed by CARD id, 6 by CHARA id -- using the wrong " +
+  "one returns null silently on all 235");
+
+// --- group cards --------------------------------------------------------
+//
+// A group card is the awkward third case: no facility (so it can never show the
+// rainbow glow) but a real friendship_bonus curve (so it is not inert either).
+// Every assertion below is a fact read out of master.mdb, not a wiki claim.
+const groups = cards.supportCards.filter((c: any) => c.kind === "group");
+check("2 group cards", groups.length === 2, groups.map((g: any) => g.name).join(", "));
+check("group cards carry a friendship bonus despite having no facility",
+  groups.every((g: any) => g.stat === null && (g.effects.friendship_bonus?.["50"] ?? 0) > 0),
+  groups.map((g: any) => `${g.charaName} ${g.effects.friendship_bonus?.["50"]}%`).join(", "));
+check("friend cards carry NO friendship bonus",
+  cards.supportCards.filter((c: any) => c.kind === "friend")
+    .every((c: any) => (c.effects.friendship_bonus?.["50"] ?? 0) === 0),
+  "this is what makes group != friend; if it ever fails, contributesFriendship() " +
+  "needs revisiting");
+check("every group card bundles members",
+  groups.every((g: any) => g.groupMembers.length > 0),
+  groups.map((g: any) => `${g.charaName} x${g.groupMembers.length}`).join(", "));
+check("Heirs to the Throne is 3 members + a 2-step card chain = 5 outings",
+  byCardId.get(30067).groupMembers.length === 3 &&
+  byCardId.get(30067).outingMax === 2 &&
+  byCardId.get(30067).totalOutings === 5);
+check("Team Sirius is 6 members + a 1-step card chain = 7 outings",
+  byCardId.get(30081).groupMembers.length === 6 &&
+  byCardId.get(30081).outingMax === 1 &&
+  byCardId.get(30081).totalOutings === 7,
+  "more turn commitment than any friend card, which tops out at 5");
+check("group members resolve names",
+  groups.every((g: any) => g.groupMembers.every((m: any) => !!m.name)),
+  byCardId.get(30067).groupMembers.map((m: any) => m.name).join(", "));
+check("both group cards have a bond-80 unique effect",
+  groups.every((g: any) =>
+    g.uniqueEffect.some((u: any) =>
+      u.bondThreshold?.some((b: any) => b.bondAtLeast === 80))),
+  "Team Sirius: training_effectiveness +10; Heirs: skill_point_bonus +2");
+
+// --- outing chains ------------------------------------------------------
+const chains: any[] = (ds as any).outingChains;
+check("7 outing companions (5 friends + 2 group cards)", chains.length === 7);
+check("friend chains are 5/5/5/5/3",
+  chains.filter((c) => c.kind === "friend").map((c) => c.totalOutings).sort().join(",")
+    === "3,5,5,5,5",
+  "Sasami Anshinzawa is the short one; assuming 5 over-books two turns");
+check("group cards owe more outings than their chain length",
+  chains.filter((c) => c.kind === "group")
+    .every((c) => c.totalOutings > c.totalSteps),
+  "the chain is not the schedule -- member outings dominate");
+check("friendEvents stays the friend-only subset",
+  (ds as any).friendEvents.length === 5 &&
+  (ds as any).friendEvents.every((f: any) => f.kind === "friend"));
+
+// --- scenario restrictions ----------------------------------------------
+const restr = (ds as any).scenarioRestrictions;
+check("Team Sirius is listed against Grand Concert",
+  restr.rows.some((r: any) => r.cardId === 30081 && r.scenarioId === 3));
+check("restriction semantics are explicitly unresolved",
+  restr.semantics === "unknown",
+  "banned-from vs exclusive-to changes the answer; master.mdb does not say");
 
 // --- sparks / inspirations ----------------------------------------------
 const sparks = JSON.parse(readFileSync(join(GEN, pick("sparks.")), "utf8"));
