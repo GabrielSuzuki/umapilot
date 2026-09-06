@@ -202,16 +202,20 @@ const RE_CB_FRIENDSHIP =
 const RE_CB_CHAIN =
   /^Support\s+Chain\s+Event\s+Frequency\s+Lvl\s+\+(\d+)$/i;
 /**
- * "Speciality Priority Up +5" / "Specialty Priority Up +5".
+ * "Specialty Priority +5".
  *
- * Both spellings, because the guide writes one and the game may write the
- * other, and this is the ONE Concert Bonus type not yet seen on screen -- so
- * its exact wording is still unknown. If it does not match, the clause lands in
- * `unparsed` and the test suite fails loudly rather than the bonus quietly
- * contributing nothing. That is the intended outcome, not a bug to work around.
+ * The game's actual wording, read from text_data on 2026-09-06. uma.guide calls
+ * this "Speciality Priority Up" -- wrong on the spelling AND on the trailing
+ * "Up", which is why the first version of this pattern missed it and the clause
+ * landed in `unparsed`. That is the safety net working: the third Concert Bonus
+ * type was the one neither of us had seen on screen, the parser refused to
+ * guess at it, and the suite failed loudly with the exact text quoted.
+ *
+ * Both spellings and an optional "Up" are accepted, since the guide's version
+ * may yet turn up somewhere and costs nothing to allow.
  */
 const RE_CB_SPECIALITY =
-  /^Special(?:i)?ty\s+Priority\s+Up(?:\s+\+?(\d+)%?)?$/i;
+  /^Special(?:i)?ty\s+Priority(?:\s+Up)?(?:\s+\+?(\d+)%?)?$/i;
 
 export function decodeConcertBonus(text: string | null): DecodedConcertBonus {
   const out: DecodedConcertBonus = {
