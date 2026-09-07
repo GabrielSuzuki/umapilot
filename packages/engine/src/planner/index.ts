@@ -256,7 +256,7 @@ export function plan(
          "clamp to no gain at all"]
       : []),
     ...(isCampTurn(state.turn)
-      ? ["this is a summer-camp turn: every facility trains at level 5 " +
+      ? ["this is a summer camp turn: every facility trains at level 5 " +
          "regardless of its own level, and the training does not count toward " +
          "that facility's next level-up. The level-5 values are decoded; the " +
          "turn window is read off a captured career, not master.mdb"]

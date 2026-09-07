@@ -189,6 +189,15 @@ export function isCampTurn(turn: number): boolean {
   return CAMP_TURNS.has(turn);
 }
 
+/**
+ * A friend outing's random token event. Player-reported, not decoded: the first
+ * click is guaranteed, later ones fire around 40-50% of the time, and the payout
+ * is 20 points of whichever currency you have least of. Separate from the outing
+ * chain, whose own rewards live in story assets and remain unknown.
+ */
+export const FRIEND_EVENT_PROC = 0.45;
+export const FRIEND_EVENT_TOKENS = 20;
+
 export const ENERGY_MIN = 0;
 export const ENERGY_MAX = 100;
 export const MOOD_MIN = -2;
@@ -559,7 +568,10 @@ export class GrandConcertScenario
           next.skillPoints += result.skillPoints;
           next.energy = clamp(next.energy + result.energy, ENERGY_MIN, ENERGY_MAX);
           for (const a of result.assumptions) addAssumption(s, a);
-          this.grantTokens(s, action.facility, placed.length, rng);
+          // `placed` is what computeTraining already scored, so the rainbow
+          // test here is the same one that drove the stat gain.
+          this.grantTokens(s, action.facility, placed.length, rng,
+            placed.some((c) => isRainbow(c, action.facility)));
           this.growBonds(s, action.facility);
           // A camp training does not count toward the facility's own level-up.
           // See CAMP_TURNS for the observation that says so.
@@ -591,6 +603,31 @@ export class GrandConcertScenario
         if (action.companionCharaId !== undefined) {
           const chain = this.outingChains.find((f) => f.companionId === action.companionCharaId);
           if (chain) {
+            // Going out with a friend can fire a random event that pays
+            // performance points, and it is SEPARATE from the outing chain --
+            // the chain's own per-step rewards live in story assets and remain
+            // unknown (`rewardsKnown: false`). Reported by the player: the
+            // first click is a guaranteed event, and afterwards roughly 40-50%
+            // of clicks fire one; the payout is 20 points of whichever currency
+            // you currently have least of.
+            //
+            // That last part is the interesting half. It is not a flat income
+            // term, it is a SELF-TARGETING one: it always lands on the currency
+            // the shop is short of, which is exactly what freezes a song board.
+            // Nothing in master.mdb describes it.
+            const seen = s.friendEventProgress[chain.companionId] ?? 0;
+            if (seen === 0 || rng() < FRIEND_EVENT_PROC) {
+              const scarcest = TOKENS.reduce((a, b) => (s.tokens[a] <= s.tokens[b] ? a : b));
+              s.tokens[scarcest] = Math.min(
+                s.tokens[scarcest] + FRIEND_EVENT_TOKENS, s.tokenCaps[scarcest],
+              );
+              addAssumption(s,
+                `a friend outing fired a token event: +${FRIEND_EVENT_TOKENS} of the ` +
+                `scarcest currency. The first outing is guaranteed and later ones ` +
+                `fire at ${Math.round(FRIEND_EVENT_PROC * 100)}%, both reported by a ` +
+                `player rather than decoded -- these events are not in master.mdb. ` +
+                `The outing CHAIN's own rewards are still unmodelled and pay nothing.`);
+            }
             const now = s.friendEventProgress[chain.companionId] ?? 0;
             if (now < chain.totalOutings) {
               s.friendEventProgress[chain.companionId] = now + 1;
@@ -743,18 +780,54 @@ export class GrandConcertScenario
     addAssumption(s, "support card placement weighting is a 2:1 approximation, not decoded");
   }
 
-  private grantTokens(s: GrandConcertState, facility: Stat, cardCount: number, rng: Rng): void {
+  /**
+   * Roll which currency a training pays out in: primary, secondary, or one of
+   * the other three.
+   */
+  private rollToken(facility: Stat, rng: Rng): Token {
     const map = this.dataset.constants.facilityTokens[facility];
     const w = this.dataset.constants.tokenRollWeights;
     const roll = weightedPick(rng, { primary: w.primary, secondary: w.secondary, other: w.other });
+    if (roll === "primary") return map.primary;
+    if (roll === "secondary") return map.secondary;
+    const others = TOKENS.filter((t) => t !== map.primary && t !== map.secondary);
+    return others[Math.floor(rng() * others.length)]!;
+  }
 
-    let token: Token;
-    if (roll === "primary") token = map.primary;
-    else if (roll === "secondary") token = map.secondary;
-    else {
-      const others = TOKENS.filter((t) => t !== map.primary && t !== map.secondary);
-      token = others[Math.floor(rng() * others.length)]!;
-    }
+  /**
+   * Pay out performance points for a training.
+   *
+   * A RAINBOW TRAINING PAYS TWICE. Not a bigger number in one currency -- two
+   * separate currencies, each at the full amount. Read straight off the
+   * training screen in the 2026-09-05 capture, where the payout badges sit
+   * beside the performance-point column:
+   *
+   *   frame 23  Speed, rainbow      Da +18   Vo +18
+   *   frame 26  Wit,   rainbow      Pa  +8   Co  +8
+   *   frame 33  Wit,   rainbow      Vo +17   Co +17
+   *   frame 49  Wit,   rainbow      Pa +13   Co +13
+   *   frame 30  Wit,   no rainbow   Co +12            <- one badge
+   *
+   * The amounts within a pair are always equal, so this is two rolls of the
+   * same payout rather than one payout split in half. The second roll is an
+   * ordinary one: frame 26 landed on Wit's own primary and secondary, frame 23
+   * paid Speed's primary plus vocal, which is neither.
+   *
+   * This is the largest income term in the scenario and nothing in master.mdb
+   * says it exists -- `tokenRollWeights` was already community-sourced, and
+   * this is the same class of fact, evidenced by the capture above. It matters
+   * for more than income: rainbow doubling is what breaks a deck out of its own
+   * two currencies, and a shop that cannot afford a song board freezes until it
+   * does, for as long as 16 turns.
+   */
+  private grantTokens(
+    s: GrandConcertState,
+    facility: Stat,
+    cardCount: number,
+    rng: Rng,
+    rainbow = false,
+  ): void {
+    const token = this.rollToken(facility, rng);
 
     // PerformanceToken = floor((S + F) * 1.15^C + 2L). S is 5 for Wit, 9
     // otherwise; F is facility level; C is the support count on this facility;
@@ -788,6 +861,21 @@ export class GrandConcertScenario
     }
 
     s.tokens[token] = Math.min(s.tokens[token] + amount, s.tokenCaps[token]);
+
+    if (rainbow) {
+      // The second payout: its own roll, the same amount. Rolled separately so
+      // it can land on the same currency as the first, which the capture does
+      // not rule out -- frame 30's single badge is a non-rainbow training, not a
+      // rainbow whose two rolls collided.
+      const second = this.rollToken(facility, rng);
+      s.tokens[second] = Math.min(s.tokens[second] + amount, s.tokenCaps[second]);
+      addAssumption(s,
+        "a rainbow training pays performance points TWICE -- two currency rolls, " +
+        "each at the full amount. Read off the training screen in a captured " +
+        "career (frames 23, 26, 33, 49 show two equal badges; frame 30, without " +
+        "a rainbow, shows one). Not in master.mdb: the same class of fact as the " +
+        "token roll weights, which are also community-sourced.");
+    }
   }
 
   /**

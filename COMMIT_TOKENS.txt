@@ -1,0 +1,71 @@
+scenario: a rainbow training pays twice, and friend outings pay tokens
+
+Two income terms the engine did not have, both player-reported and one of
+them visible in the 2026-09-05 capture all along.
+
+A RAINBOW TRAINING PAYS TWICE
+
+Not a bigger number in one currency: two separate currencies, each at the
+full amount. The payout badges sit beside the performance-point column on
+the training screen, and the capture shows them plainly:
+
+  frame 23  Speed, rainbow      Da +18   Vo +18
+  frame 26  Wit,   rainbow      Pa  +8   Co  +8
+  frame 33  Wit,   rainbow      Vo +17   Co +17
+  frame 49  Wit,   rainbow      Pa +13   Co +13
+  frame 30  Wit,   no rainbow   Co +12            <- one badge
+
+The amounts within a pair are always equal, so this is two rolls of the
+same payout rather than one payout split. The second roll is an ordinary
+one -- frame 26 landed on Wit's own primary and secondary, frame 23 paid
+Speed's primary plus vocal, which is neither.
+
+Measured, 3 seeds, real deck, untargeted plan():
+
+  income   1137 -> 1499   (+32%, and now above the real career's >=1325)
+  songs     8.3 -> 11.7   (+41%)
+  stats    3143 -> 3111   (unchanged, within a +/-150 seed spread)
+
+Income and songs move a long way; final stats do not. That is not a
+contradiction -- the extra songs arrive late, and a song's value is its
+per-training bonus compounded over the turns that remain. Bought at turn
+60 it earns almost nothing. Getting songs EARLY is now the open problem,
+where before the problem was getting them at all.
+
+This is also what breaks a deck out of its own two currencies. A 3-Wit
+2-Speed deck earns mental and dance and starves visual and vocal; the
+second roll lands anywhere, and a shop that cannot pay for a song board
+freezes -- measured at 59 turns out of 72, the longest run 16 turns.
+
+FRIEND OUTINGS FIRE A TOKEN EVENT
+
+Separate from the outing chain: the first click is guaranteed and later
+ones fire at roughly 40-50%, paying 20 points of whichever currency you
+have least of. Self-targeting, which is exactly the shape of the problem.
+
+Modelled at 45% and 20 points, both named as player-reported. It makes
+careers WORSE when a companion is declared (2820 against 3111), and that
+is worth stating rather than hiding: the outing CHAIN's own rewards are
+still unknown -- the extractor says so, `rewardsKnown: false, per-step
+rewards live in the story assets` -- so the search sees most of an
+outing's cost and only this fraction of its payoff, and takes outings it
+should not. The model being right and the search then misusing it is a
+policy problem; leaving the model wrong to flatter the search would not
+be. Default behaviour is unchanged, because no caller declares a
+companion unless the user names one.
+
+THE GOLDEN CAREER CANNOT EXPRESS ANY OF THIS
+
+Its digest did not move, which means no rainbow fired in it: the golden
+policy trains whichever stat is furthest from its cap, so it spreads
+across five facilities and no card reaches bond 80. A fixture that cannot
+reach the state under test is not a regression net for it. The new unit
+tests carry that weight instead, each paired with a cold control so that
+"rainbow pays twice" cannot be confused with "everything pays twice".
+
+Neither term is in master.mdb. `tokenRollWeights` was already
+community-sourced and these are the same class of fact -- named in the
+assumptions every projection carries, not buried in the dataset.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013U7hEY1FgqLS8LKB9F2Ez8

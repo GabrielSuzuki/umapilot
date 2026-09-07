@@ -614,6 +614,60 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
 }
 
 // ---------------------------------------------------------------------------
+// A rainbow training pays twice
+//
+// Two currency rolls, each at the full amount -- read off the training screen
+// in the 2026-09-05 capture (frames 23, 26, 33, 49 show two equal badges;
+// frame 30, without a rainbow, shows one). Paired with a non-rainbow control,
+// because "rainbow pays twice" and "everything pays twice" look the same from
+// one assertion.
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const base = scenario.initialState();
+  const facility: Stat = "speed";
+
+  const withBond = (bond: number) => {
+    const st = {
+      ...base,
+      scenario: {
+        ...base.scenario,
+        cards: base.scenario.cards.map((c: any) =>
+          c.stat === facility ? { ...c, bond } : { ...c, bond: 0 }),
+        // Put every card on the facility we are about to train, so the only
+        // thing varying between the two runs is the bond.
+        placement: { speed: base.scenario.cards.map((_: unknown, i: number) => i),
+                     stamina: [], power: [], guts: [], wit: [] },
+      },
+    } as typeof base;
+    return st;
+  };
+
+  const paidOut = (st: typeof base) => {
+    const after = scenario.step(st, { kind: "train", facility }, mulberry32(11));
+    return TOKENS.reduce((a, t) => a + (after.scenario.tokens[t] - st.scenario.tokens[t]), 0);
+  };
+
+  const cold = paidOut(withBond(0));            // no card is rainbow
+  const hot = paidOut(withBond(100));           // the speed cards are rainbow
+
+  check("a rainbow training pays twice what a cold one does",
+    hot === cold * 2, `cold ${cold}, rainbow ${hot}`);
+
+  check("the two rainbow payouts are equal, not a split",
+    hot % 2 === 0 && hot / 2 === cold,
+    "the capture shows two badges of the SAME number, so this is two payouts " +
+    "of the full amount rather than one amount divided between currencies");
+
+  check("plan() says the rainbow payout is player-reported, not decoded", (() => {
+    const st = withBond(100);
+    const after = scenario.step(st, { kind: "train", facility }, mulberry32(11));
+    return after.scenario.assumptions.some((a) => a.includes("pays performance points TWICE"));
+  })());
+}
+
+// ---------------------------------------------------------------------------
 // Summer camp
 //
 // Camp is a window, not a gain: the facility trains at level 5 without its own
