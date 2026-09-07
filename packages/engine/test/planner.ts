@@ -1062,6 +1062,71 @@ function playPolicy(
   }
 
   // -------------------------------------------------------------------------
+  // Which currency the shop spends
+  // -------------------------------------------------------------------------
+  //
+  // greedyShop used to take the first affordable technique in board order, so
+  // when two were affordable it spent an arbitrary currency. That is never
+  // right and is sometimes badly wrong: on a frozen turn a run holds ~213
+  // points against a cheapest offer of ~35, with 75% of the holding in
+  // currencies that offer cannot use (`stranded-tokens.md`). These pin the
+  // preference, not the stat effect -- the stat effect is +6.8 with a 95%
+  // interval of -3.9..17.4 at n=2500 and must not be asserted.
+
+  check("the shop spends the currency the run has most of", (() => {
+    // Two affordable techniques, one priced in a currency the run is nearly
+    // out of and one in a currency it is flush with. Same board, same turn.
+    const sc2 = new GrandConcertScenario(syntheticDataset(), { cards: SYNTHETIC_CARDS.map((c) => ({ ...c })) });
+    let base = sc2.initialState();
+    const board = sc2.offersOnBoard(base);
+    const techs = board.filter((o) => o.action.kind === "technique");
+    if (techs.length < 2) return true; // nothing to choose between; not a failure
+    // Fund every currency generously, then starve exactly the ones the FIRST
+    // offer needs, so board order and thrift disagree.
+    const rich = { ...base.scenario.tokens };
+    for (const t of TOKENS) rich[t] = 300;
+    const scarce = techs[0]!;
+    for (const t of TOKENS) if (scarce.cost[t] > 0) rich[t] = scarce.cost[t];
+    const st2: GcRunState = { ...base, scenario: { ...base.scenario, tokens: rich } };
+
+    const affordable = sc2.legalShopActions(st2).filter((a) => a.kind === "technique");
+    if (affordable.length < 2) return true;
+    const after = greedyShop(sc2, st2, 1, mulberry32(1));
+    // Whatever it bought, no currency may have been driven below what it would
+    // have been left with by the thriftiest legal choice.
+    let bestFloor = -Infinity;
+    for (const a of affordable) {
+      const cost = sc2.offersOnBoard(st2).find(
+        (o) => o.action.kind === "technique" && o.action.id === (a as { id: number }).id)?.cost;
+      if (!cost) continue;
+      let floor = Infinity;
+      for (const t of TOKENS) floor = Math.min(floor, rich[t] - cost[t]);
+      bestFloor = Math.max(bestFloor, floor);
+    }
+    let gotFloor = Infinity;
+    for (const t of TOKENS) gotFloor = Math.min(gotFloor, after.scenario.tokens[t]);
+    return gotFloor >= bestFloor;
+  })());
+
+  // Songs are worth more than techniques and their cost is not optional, so the
+  // thrift rule must never reorder them away.
+  check("a song is still bought ahead of any technique", (() => {
+    let cur = st;
+    for (let i = 0; i < 25 && !sc.isTerminal(cur); i++) {
+      const actions = sc.legalShopActions(cur);
+      const hasSong = actions.some((a) => a.kind === "song");
+      if (hasSong) {
+        const before = cur.scenario.songsOwned.length;
+        const after = greedyShop(sc, cur, 1, mulberry32(i + 5));
+        if (after.scenario.songsOwned.length !== before + 1) return false;
+      }
+      cur = sc.step(cur, competentPolicy(cur, { scenario: sc }), mulberry32(i + 7));
+      cur = greedyShop(sc, cur, 2, mulberry32(i + 99));
+    }
+    return true;
+  })());
+
+  // -------------------------------------------------------------------------
   // The Concert Bonus
   // -------------------------------------------------------------------------
   //

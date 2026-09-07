@@ -38,7 +38,7 @@ import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concer
 import type { ShopAction } from "../scenario";
 import type { Policy } from "../policy";
 import { focusedPolicy, competentPolicy } from "../policy";
-import type { Stat } from "../../../data/src/types";
+import { TOKENS, type Stat } from "../../../data/src/types";
 import {
   shortfallScore, meetsTarget, goalEstimate,
   type CompiledTarget, type GoalEstimate,
@@ -108,6 +108,36 @@ export const DEFAULT_ROLLOUT: Omit<RolloutOptions, "policyTarget"> = {
  *
  * So it is gone. What remains is the rule this project started with, which was
  * never wrong about preference -- only about what it was choosing between.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE THING IT WAS STILL ARBITRARY ABOUT: WHICH CURRENCY IT SPENDS
+ * ---------------------------------------------------------------------------
+ *
+ * When two or three techniques are affordable the choice between them was the
+ * board's order, which is nothing. It matters because a run's currencies are
+ * wildly unequal: on a frozen turn `competentPolicy` holds 213 performance
+ * points against a cheapest offer of 35, and 75% of what it holds is in
+ * currencies that offer cannot use (`stranded-tokens.md`). Spending a scarce
+ * currency when an abundant one would have done is pure waste, and choosing not
+ * to costs nothing at all -- same turn, same board, same purchase count this
+ * turn, same stats per training.
+ *
+ * So among affordable techniques this takes the one leaving the healthiest
+ * balance behind: maximise the smallest per-currency holding after paying.
+ * Songs still come first and are never reordered -- they are worth more and
+ * their cost is not optional.
+ *
+ * MEASURED, n=2500 careers, real deck, `competentPolicy`:
+ *
+ *     purchases     28.3 -> 29.1   +0.8   t 4.52
+ *     songs          7.1 ->  7.4   +0.2   t 4.63
+ *     tokens unspent 299 ->  279   -19.4  t -4.57
+ *     frozen turns  59.9 -> 59.6   -0.3   t -3.23
+ *     final stats   2271 -> 2278   +6.8   t 1.25   95% CI -3.9..17.4
+ *
+ * The mechanism is confirmed; the STAT effect is not, and is stated that way on
+ * purpose. This is here because it is free and strictly better reasoning, not
+ * because it was shown to win a career. Do not quote the +6.8.
  */
 export function greedyShop(
   scenario: GrandConcertScenario,
@@ -119,14 +149,43 @@ export function greedyShop(
   for (let i = 0; i < maxBuys; i++) {
     const actions = scenario.legalShopActions(next);
     const pick =
-      actions.find((a) => a.kind === "song") ??
-      actions.find((a) => a.kind === "technique");
+      actions.find((a) => a.kind === "song") ?? thriftiest(scenario, next, actions);
     // Nothing affordable on the board. Buying is the only thing that redraws
     // it, so this waits -- which is what the game makes you do too.
     if (!pick) break;
     next = scenario.buy(next, pick, rng);
   }
   return next;
+}
+
+/**
+ * Of the affordable techniques, the one that leaves the largest smallest
+ * remaining balance -- i.e. that spends what this run has most of.
+ *
+ * Ties keep board order, so this stays a total order and the rollout stays a
+ * pure function of its seed.
+ */
+function thriftiest(
+  scenario: GrandConcertScenario,
+  state: GcRunState,
+  actions: ShopAction[],
+): ShopAction | undefined {
+  const held = state.scenario.tokens;
+  let board: ReturnType<GrandConcertScenario["offersOnBoard"]> | null = null;
+  let best: ShopAction | undefined;
+  let bestFloor = -Infinity;
+  for (const a of actions) {
+    if (a.kind !== "technique") continue;
+    board ??= scenario.offersOnBoard(state);
+    const cost = board.find(
+      (o) => o.action.kind === "technique" && o.action.id === a.id,
+    )?.cost;
+    if (!cost) continue;
+    let floor = Infinity;
+    for (const t of TOKENS) floor = Math.min(floor, held[t] - cost[t]);
+    if (floor > bestFloor) { bestFloor = floor; best = a; }
+  }
+  return best;
 }
 
 /**
