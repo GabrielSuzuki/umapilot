@@ -35,6 +35,7 @@ import {
 } from "../src/planner/valuation";
 import {
   valueSong, songPlan, valueAtArrival, waitAfterTraining, expectedIncome,
+  explainSongPlan,
 } from "../src/planner/songs";
 import { syntheticDataset, SYNTHETIC_CARDS } from "./fixtures/synthetic-scenario";
 
@@ -834,7 +835,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
     typeof r1.topIsClear === "boolean",
     r1.topIsClear ? "top is clear" : "top two are a tie at this sample count");
 
-  check("the plan's assumptions name the horizon and the undecoded Concert Bonus",
+  check("the plan's assumptions name the horizon and the unmodelled Concert Bonuses",
     r1.assumptions.some((a) => a.includes("turns ahead")) &&
     r1.assumptions.some((a) => a.includes("Concert Bonus")));
 
@@ -1059,6 +1060,136 @@ function playPolicy(
         w >= 1, `${w.toFixed(1)} turns`);
     }
   }
+
+  // -------------------------------------------------------------------------
+  // The Concert Bonus
+  // -------------------------------------------------------------------------
+  //
+  // THE BUG THESE PIN. `previewTraining` took a `songsOwned` override but read
+  // concert bonuses from `concertBonusesActive`, which no override could touch.
+  // `valueSong` prices its compounding half as previewTraining(with) minus
+  // previewTraining(without), so both sides carried IDENTICAL concert terms and
+  // the Concert Bonus cancelled to exactly zero. On the real dataset that was
+  // 9 of 21 songs reading compoundingValue 0 -- and by the master.mdb cross-tab
+  // those nine are exactly the nine whose Mastery Bonus is one-off, so their
+  // whole compounding half was the part that vanished. The old label for them
+  // read "worth the same whenever it is bought", for the +10% friendship song.
+  //
+  // The fixture pairs them the same way the game does: song 204 is mastery
+  // "Speed +20" (purely one-off) with concert "Friendship Training
+  // Effectiveness +5%", so its ONLY compounding effect is the Concert Bonus. If
+  // the override regresses, that song's concertValue returns to 0 and check 2
+  // fails.
+
+  check("previewTraining honours a concertBonusesActive override", (() => {
+    const friendship = syntheticDataset().songs.find(
+      (x) => /Friendship/i.test(x.concert_bonus?.text ?? ""));
+    if (!friendship) return false;
+    // Bonds up, so there is friendship for the bonus to multiply at all.
+    const bonded: GcRunState = {
+      ...st,
+      scenario: { ...st.scenario, cards: st.scenario.cards.map((c) => ({ ...c, bond: 100 })) },
+    };
+    const facility = STATS.find(
+      (f) => sc.previewTraining(bonded, f).terms.friendship > 1);
+    if (!facility) return false;
+    const off = sc.previewTraining(bonded, facility, { concertBonusesActive: [] });
+    const on = sc.previewTraining(bonded, facility, { concertBonusesActive: [friendship.id] });
+    return on.terms.friendship > off.terms.friendship;
+  })());
+
+  // A Concert Bonus is worth something only where there is friendship to
+  // multiply, and this fixture's 24-turn career cannot take a card from bond 0
+  // to bond 80 at all. So these bond the cards up first: that is the condition
+  // under which the bonus HAS a value, and it is the condition under which the
+  // old code still returned exactly zero -- both sides of its difference
+  // carried the same concert term whatever the bonds were. Pinning the bug
+  // needs a state where the right answer is not zero.
+  const bondedAt = (base: GcRunState): GcRunState => ({
+    ...base,
+    scenario: {
+      ...base.scenario,
+      cards: base.scenario.cards.map((c) => ({ ...c, bond: 100 })),
+    },
+  });
+
+  const oneOffOnly = syntheticDataset().songs.find(
+    (x) => /Friendship/i.test(x.concert_bonus?.text ?? "")
+      && !/^Training /.test(x.mastery_bonus?.text ?? ""));
+  if (oneOffOnly) {
+    const early = bondedAt(st);
+    const v = valueSong(sc, early, oneOffOnly.id, tgt);
+    check("a song whose only compounding effect is its Concert Bonus is not worth zero",
+      v !== null && v.compoundingValue === 0 && v.concertValue > 0,
+      `${oneOffOnly.name}: mastery ${v?.compoundingValue.toExponential(2)}, ` +
+      `concert ${v?.concertValue.toExponential(2)}`);
+
+    // The whole point of pricing it: the bonus switches on at the NEXT concert
+    // and then runs for the rest of the career, so every concert it is bought
+    // ahead of is worth another block of trainings. Late in the career there is
+    // almost nothing left for it to multiply.
+    let cur = st;
+    for (let i = 0; i < 19 && !sc.isTerminal(cur); i++) {
+      cur = sc.step(cur, competentPolicy(cur, { scenario: sc }), mulberry32(i + 31));
+    }
+    const late = bondedAt(cur);
+    const vLate = valueSong(sc, late, oneOffOnly.id, tgt);
+    check("a Concert Bonus is worth more the earlier it is bought",
+      v !== null && vLate !== null && v.concertValue > vLate.concertValue,
+      `turn ${early.turn} ${v?.concertValue.toExponential(2)} vs ` +
+      `turn ${late.turn} ${vLate?.concertValue.toExponential(2)}`);
+  }
+
+  check("a bigger Concert Bonus is worth more than a smaller one", (() => {
+    const songs = syntheticDataset().songs;
+    const five = songs.find((x) => /Effectiveness \+5%/.test(x.concert_bonus?.text ?? ""));
+    const ten = songs.find((x) => /Effectiveness \+10%/.test(x.concert_bonus?.text ?? ""));
+    if (!five || !ten) return false;
+    const bonded = bondedAt(st);
+    const a = valueSong(sc, bonded, five.id, tgt);
+    const b = valueSong(sc, bonded, ten.id, tgt);
+    return a !== null && b !== null && a.concertValue > 0 && b.concertValue > a.concertValue;
+  })());
+
+  // Already running: there is nothing left to buy, so it must price at zero
+  // rather than being counted twice.
+  check("a Concert Bonus already active is worth nothing more", (() => {
+    const song = syntheticDataset().songs.find(
+      (x) => /Friendship/i.test(x.concert_bonus?.text ?? ""));
+    if (!song) return false;
+    const owned: GcRunState = {
+      ...st,
+      scenario: { ...st.scenario, concertBonusesActive: [song.id] },
+    };
+    return valueSong(sc, owned, song.id, tgt)?.concertValue === 0;
+  })());
+
+  // The bonus switches on AT a concert. Past the last one it never switches on
+  // at all, so it is worth nothing however much career is left.
+  check("a Concert Bonus bought after the last concert is worth nothing", (() => {
+    const song = syntheticDataset().songs.find(
+      (x) => /Friendship/i.test(x.concert_bonus?.text ?? ""));
+    if (!song) return false;
+    const lastConcert = Math.max(...sc.concerts.map((c) => c.turn));
+    const after: GcRunState = { ...st, turn: lastConcert + 1 };
+    return sc.nextConcertTurn(after.turn) === null
+      && valueSong(sc, after, song.id, tgt)?.concertValue === 0;
+  })());
+
+  // Every song in this scenario compounds -- the nine "one-off" songs are
+  // exactly the nine carrying the friendship multiplier. The old wording is a
+  // claim the data contradicts, so it must never be printed again.
+  check("no song is described as worth the same whenever it is bought", (() => {
+    let cur = st;
+    for (let i = 0; i < 25 && !sc.isTerminal(cur); i++) {
+      for (const line of explainSongPlan(songPlan(sc, cur, tgt))) {
+        if (/worth the same whenever/.test(line)) return false;
+      }
+      cur = sc.step(cur, competentPolicy(cur, { scenario: sc }), mulberry32(i + 7));
+      cur = greedyShop(sc, cur, 2, mulberry32(i + 99));
+    }
+    return true;
+  })());
 
   check("a run with no history assumes it trains every turn", (() => {
     const prof = trainingProfile(sc, st);

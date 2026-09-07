@@ -18,6 +18,7 @@ import {
 import { weightedPick, chance, mulberry32, type Rng } from "../../rng";
 import {
   decodeEffectText, accumulatePerTrainingBonuses, accumulateConcertBonuses,
+  decodeConcertBonus,
 } from "../../../../data/src/effects";
 import {
   computeTraining, resolveBaseTraining, isRainbow,
@@ -368,6 +369,25 @@ export class GrandConcertScenario
   /** The song catalogue, for callers that price songs rather than buy them. */
   get songs(): GrandConcertDataset["songs"] {
     return this.dataset.songs;
+  }
+
+  /** The concert schedule, for callers that price a song's Concert Bonus. */
+  get concerts(): GrandConcertDataset["concerts"] {
+    return this.dataset.concerts;
+  }
+
+  /**
+   * The turn of the first concert at or after `turn`, or null if none is left.
+   *
+   * A song bought now has its Concert Bonus switched on here and not before, so
+   * this is the start of the horizon over which that bonus is worth anything.
+   */
+  nextConcertTurn(turn: number): number | null {
+    let best: number | null = null;
+    for (const c of this.dataset.concerts) {
+      if (c.turn >= turn && (best === null || c.turn < best)) best = c.turn;
+    }
+    return best;
   }
 
   get statCaps(): StatVector {
@@ -762,12 +782,24 @@ export class GrandConcertScenario
       addAssumption(s, `unparsed song effect clause, contributing nothing: ${u}`);
     }
     this.rollBoard(next, rng);
-    if (song.concert_bonus_type !== null) {
-      addAssumption(s,
-        "Concert Bonus opcodes are NOT decoded -- master.mdb stores the type as an " +
-        "integer with no shipped description, so a song's permanent from-next-concert " +
-        "effect is stored, flagged, and not applied. This is the largest known gap in " +
-        "the value of any purchase.");
+    // The Concert Bonus itself is NOT applied here. It starts at the next
+    // concert (`maybeHoldConcert`), which is the whole time-value distinction
+    // this scenario exists to model.
+    const cb = song.concert_bonus ? decodeConcertBonus(song.concert_bonus.text) : null;
+    if (cb) {
+      if (cb.supportChainEventFrequency > 0) {
+        addAssumption(s,
+          "a song's Concert Bonus of \"Support Chain Event Frequency Lvl +N\" is " +
+          "decoded but NOT modelled: it raises how often support events fire, event " +
+          "outcomes are not in master.mdb, and the stored value (15) is not the level " +
+          "the game prints (+1), so the scale is not recoverable from the data either.");
+      }
+      if (cb.specialityPriority > 0) {
+        addAssumption(s,
+          "a song's Concert Bonus of \"Specialty Priority +N\" is decoded but NOT " +
+          "modelled: it biases which facility a support card is placed on, and " +
+          "placement weighting is itself an undecoded approximation.");
+      }
     }
     return next;
   }
@@ -788,12 +820,24 @@ export class GrandConcertScenario
    *     why an early song is worth several times a late one, and why nothing
    *     short of running the formula gets the number right.
    *
-   * `opts.songsOwned` and `opts.facilityLevel` override the state's own, which
-   * is the whole point for the second caller: the song planner asks "what would
-   * this training pay with one more song?" and "with this facility one level
-   * higher?", and both answers are differences of this function against itself.
-   * Everything not overridden -- placement, bonds, mood, energy -- is the
-   * state's.
+   * `opts.songsOwned`, `opts.facilityLevel` and `opts.concertBonusesActive`
+   * override the state's own, which is the whole point for the second caller:
+   * the song planner asks "what would this training pay with one more song?",
+   * "with this facility one level higher?" and "with this song's Concert Bonus
+   * running?", and all three answers are differences of this function against
+   * itself. Everything not overridden -- placement, bonds, mood, energy -- is
+   * the state's.
+   *
+   * `concertBonusesActive` is a SEPARATE override from `songsOwned`, and has to
+   * be: a song's Mastery Bonus applies the moment it is bought, while its
+   * Concert Bonus does not start until the next concert (`maybeHoldConcert`).
+   * Collapsing them would erase exactly the time-value distinction this
+   * scenario models. Omitting it was a real bug -- for two days `valueSong`
+   * passed `songsOwned` alone, so both sides of its with/without difference
+   * carried IDENTICAL concert terms and the Concert Bonus cancelled to exactly
+   * zero. Nine of the twenty-one songs carry Friendship Training Effectiveness
+   * and nothing else that compounds, so nine songs had their whole compounding
+   * half priced at 0. See `concert-bonus.md`.
    *
    * Deterministic. Failure is not rolled and not applied -- this is the
    * *successful* outcome, which is what the game displays too. Multiply by
@@ -802,11 +846,11 @@ export class GrandConcertScenario
   previewTraining(
     state: GcRunState,
     facility: Stat,
-    opts: { songsOwned?: number[]; facilityLevel?: number } = {},
+    opts: { songsOwned?: number[]; facilityLevel?: number; concertBonusesActive?: number[] } = {},
   ): TrainingResult {
     const s = state.scenario;
     const songs = this.songBonuses(opts.songsOwned ?? s.songsOwned);
-    const concert = this.concertBonuses(s.concertBonusesActive);
+    const concert = this.concertBonuses(opts.concertBonusesActive ?? s.concertBonusesActive);
     const camp = isCampTurn(state.turn);
     return computeTraining({
       facility,

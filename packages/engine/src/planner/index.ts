@@ -14,8 +14,10 @@
  *
  *   It never hides what it assumed. Every assumption the simulator accumulated
  *   rides along, and the planner adds its own -- the search horizon, the
- *   rollout policy, and the fact that song and concert-bonus effects are still
- *   undecoded, which is the largest known hole in the value it computes.
+ *   rollout policy, and which Concert Bonus effects are modelled. All three are
+ *   decoded; only Friendship Training Effectiveness is applied, because the
+ *   other two act on placement and on event frequency, neither of which this
+ *   engine simulates.
  *
  *   It is a pure function of its inputs and the seed. Same state, same target,
  *   same seed, same recommendation -- otherwise none of it is testable.
