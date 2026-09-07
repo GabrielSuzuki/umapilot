@@ -1,0 +1,52 @@
+objective: score builds by what they race as, by default
+
+Follows 74d2164, which named the 1200 halving and left it opt-in. The
+default is now race-effective: everything above 1200 counts half,
+because that is what a race does with it. Gabriel's call -- this tool
+exists to build racers, and a scoreboard that pays full price for points
+a race pays half for is answering a question nobody asked.
+
+`statValue: "raw"` restores face value for the cases where the displayed
+number IS the point: a spark to pass down, or a target set for the
+number itself. The option is a mode rather than a boolean now, because
+`raceEffective: false` reads as a double negative at the call site;
+internally it stays a boolean, since shortfallScore reads it once per
+stat per node.
+
+What this does and does not change:
+
+  A target is still the RAW number the player typed and the game will
+  show them. The mode decides how progress toward it is priced, never
+  what it means.
+
+  A build sitting on its target scores 1.0 in both modes -- both sides
+  of the ratio are converted the same way. That is deliberate: it keeps
+  the score and meetsTarget agreeing.
+
+  What moves is the GRADIENT. Above 1200 the next stat point buys half
+  the score it buys below, measured in the tests at 7.143e-4 against
+  1.429e-3. That is the whole mechanism, and it is what steers the
+  search away from overpaying at the top of a stat.
+
+  meetsTarget is untouched and compares raw against raw in both modes.
+  effectiveStat is strictly increasing, so converting both sides would
+  change nothing but the cost -- and "did I hit 1600 Speed" is a
+  question about the displayed number, whose answer must not depend on
+  how the search happened to be scoring at the time.
+
+Size, on the record: with a 1600-Speed target the search shifts its
+training mix (sp13/wi26 -> sp14/wi19) and ends 93 points higher. But no
+simulated career currently reaches 1200 in ANY stat -- the model tops
+out near 974 Speed -- so today this is a margin change. It starts to
+matter when the simulator can produce builds like the captured career's
+1635 Speed, which needs races, events, summer camp and songs first.
+
+The first two tests written for this asserted the wrong thing: that a
+build above 1200 scores lower race-effective than raw. It does not, and
+cannot, because both sides of the ratio are converted. They now pin the
+gradient, which is the actual mechanism, plus the two boundary cases
+(a target below 1200 is identical in both modes; meetsTarget is mode-
+independent).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013U7hEY1FgqLS8LKB9F2Ez8

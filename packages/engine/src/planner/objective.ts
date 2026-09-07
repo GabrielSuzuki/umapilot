@@ -48,9 +48,9 @@ export interface CompiledTarget {
   /** 0 = stats only, 1 = skills only. */
   skillWeight: number;
   /**
-   * Score stats by their race-effective value rather than their raw value.
-   * Off by default: the halving is community-sourced, and a user who wants a
-   * displayed 1600 (for sparks, or for the number itself) wants raw.
+   * Score stats by race-effective value rather than face value. Set from
+   * `StatValueMode`; kept as a boolean because `shortfallScore` reads it once
+   * per stat per node, millions of times per plan.
    */
   raceEffective: boolean;
   /** True when the target constrains nothing -- scoring falls back to stat sum. */
@@ -60,7 +60,7 @@ export interface CompiledTarget {
 export function compileTarget(
   target: RunTarget,
   skillsById?: Map<number, SkillEntry>,
-  raceEffective?: boolean,
+  statValue: StatValueMode = "race-effective",
 ): CompiledTarget {
   const wanted: Array<{ stat: Stat; want: number }> = [];
   for (const stat of STATS) {
@@ -80,7 +80,7 @@ export function compileTarget(
     wanted,
     skillSpNeeded,
     skillWeight: target.skills.length === 0 ? 0 : target.skillWeight,
-    raceEffective: raceEffective ?? false,
+    raceEffective: statValue === "race-effective",
     empty: wanted.length === 0 && skillSpNeeded === 0,
   };
 }
@@ -119,8 +119,12 @@ const OVERSHOOT_WEIGHT = 0.08;
  * not be changed -- the correction belongs here, in what a build is WORTH.
  *
  * Community-sourced (uma.guide's Grand Concert page), not decoded from
- * master.mdb, so it is opt-in via `CompiledTarget.raceEffective` and off by
- * default until it is confirmed against a logged race.
+ * master.mdb. It is nonetheless the DEFAULT, by the user's decision on
+ * 2026-09-07: this tool exists to build racers, and a scoreboard that pays full
+ * price for points a race pays half for is answering a question nobody asked.
+ * `statValue: "raw"` restores face-value scoring for the cases where the
+ * displayed number is the point -- a spark to pass down, or a target set for
+ * the number itself.
  */
 export const HALVING_THRESHOLD = 1200;
 
@@ -129,6 +133,23 @@ export function effectiveStat(raw: number): number {
     ? raw
     : HALVING_THRESHOLD + (raw - HALVING_THRESHOLD) / 2;
 }
+
+/**
+ * How a stat point is priced when scoring a build.
+ *
+ *   "race-effective"  the default. Everything above 1200 counts half, because
+ *                     that is what a race does with it.
+ *   "raw"             face value, which is what the game displays and what a
+ *                     spark passes down.
+ *
+ * This changes what a point is WORTH, never what a target MEANS. A target is
+ * always the raw number the player typed and the game will show them; the mode
+ * decides how progress toward it is valued. Because `effectiveStat` is strictly
+ * increasing, the point at which a target is *met* is identical either way --
+ * see `meetsTarget`. What moves is the gradient: past 1200 the search sees the
+ * next point as worth half, which is the whole reason to have this.
+ */
+export type StatValueMode = "race-effective" | "raw";
 
 /**
  * Score a state in [0, ~1+], higher is better.
@@ -170,7 +191,16 @@ export function shortfallScore(state: GcRunState, target: CompiledTarget): numbe
   return (1 - target.skillWeight) * statScore + target.skillWeight * skillScore;
 }
 
-/** Did this state meet every part of the target? The predicate behind P(goal). */
+/**
+ * Did this state meet every part of the target? The predicate behind P(goal).
+ *
+ * Deliberately compares RAW stats against the RAW target, in both stat-value
+ * modes, and that is not an oversight. `effectiveStat` is strictly increasing,
+ * so `eff(have) >= eff(want)` exactly when `have >= want` -- converting both
+ * sides would change nothing except the cost. More importantly, "did I hit
+ * 1600 Speed" is a question about the number the game shows, and the answer
+ * must not depend on how the search happened to be scoring at the time.
+ */
 export function meetsTarget(state: GcRunState, target: CompiledTarget): boolean {
   for (const { stat, want } of target.wanted) {
     if (state.stats[stat] < want) return false;

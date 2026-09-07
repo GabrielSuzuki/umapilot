@@ -21,7 +21,9 @@ import { GrandConcertScenario, type GcRunState } from "../src/scenarios/grand-co
 import { competentPolicy, focusedPolicy, type Policy } from "../src/policy";
 import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
-import { compileTarget, shortfallScore, meetsTarget, wilson } from "../src/planner/objective";
+import {
+  compileTarget, shortfallScore, meetsTarget, wilson, effectiveStat, HALVING_THRESHOLD,
+} from "../src/planner/objective";
 import { rollout, greedyShop, stateValue, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
 import { turnCandidates, actionKey } from "../src/planner/beam";
@@ -609,6 +611,80 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   check("no recommendation is an action that cannot change anything",
     rFull.recommendations.every((r) =>
       r.action.kind !== "infirmary" && !(r.action.kind === "rest" && full.energy >= 100)));
+}
+
+// ---------------------------------------------------------------------------
+// Stat value: the 1200 halving
+//
+// The rule is that everything above 1200 counts half in a race, so a build is
+// scored on what it would race as. These pin the three things that can quietly
+// break: the default, the arithmetic, and the invariant that changing the
+// scoring mode never changes whether a target was MET.
+// ---------------------------------------------------------------------------
+
+{
+  check("effectiveStat is identity at and below the threshold",
+    effectiveStat(0) === 0 && effectiveStat(900) === 900 &&
+    effectiveStat(HALVING_THRESHOLD) === HALVING_THRESHOLD);
+
+  check("effectiveStat halves the excess above the threshold",
+    effectiveStat(1600) === 1400 && effectiveStat(1300) === 1250 &&
+    effectiveStat(1201) === 1200.5,
+    "1600 races as 1400");
+
+  check("race-effective scoring is the default",
+    compileTarget(TARGET).raceEffective === true);
+  check("raw scoring can still be asked for",
+    compileTarget(TARGET, undefined, "raw").raceEffective === false);
+
+  // The property that actually matters is the GRADIENT, not the level.
+  //
+  // Both modes divide by the target converted the same way, so a build sitting
+  // exactly on its target scores 1.0 either way -- that is deliberate, and it
+  // is what keeps `meetsTarget` and the score agreeing. What race-effective
+  // scoring changes is what the NEXT point is worth: above 1200 it buys half
+  // as much score as it does below, which is the entire reason for the mode.
+  const scenario = makeScenario();
+  const overTarget: RunTarget = {
+    ...EMPTY_TARGET,
+    stats: { speed: 1600, stamina: null, power: null, guts: null, wit: null },
+  };
+  const eff = compileTarget(overTarget);
+  const raw = compileTarget(overTarget, undefined, "raw");
+  const at = (speed: number) => {
+    const st = { ...scenario.initialState() };
+    st.stats = { ...st.stats, speed };
+    return st;
+  };
+  const gain = (t: ReturnType<typeof compileTarget>, from: number, to: number) =>
+    shortfallScore(at(to), t) - shortfallScore(at(from), t);
+
+  const lowGain = gain(eff, 1000, 1002);
+  const highGain = gain(eff, 1300, 1302);
+  check("above 1200 a stat point is worth half what it is worth below",
+    Math.abs(highGain - lowGain / 2) < 1e-9,
+    `${lowGain.toExponential(3)} below, ${highGain.toExponential(3)} above`);
+  check("raw scoring prices both points the same",
+    Math.abs(gain(raw, 1000, 1002) - gain(raw, 1300, 1302)) < 1e-9);
+
+  // And with the target itself under the line there is nothing to halve, so
+  // the two modes must be indistinguishable.
+  const underTarget: RunTarget = {
+    ...EMPTY_TARGET,
+    stats: { speed: 1000, stamina: null, power: null, guts: null, wit: null },
+  };
+  const effUnder = compileTarget(underTarget);
+  const rawUnder = compileTarget(underTarget, undefined, "raw");
+  check("a target below 1200 scores identically in both modes",
+    Math.abs(shortfallScore(at(900), effUnder) - shortfallScore(at(900), rawUnder)) < 1e-12 &&
+    Math.abs(shortfallScore(at(1000), effUnder) - shortfallScore(at(1000), rawUnder)) < 1e-12);
+
+  // The invariant. meetsTarget must not move when the scoring mode moves --
+  // "did I hit 1600 Speed" is a question about the displayed number.
+  check("meetsTarget does not depend on the scoring mode",
+    meetsTarget(at(1600), eff) === meetsTarget(at(1600), raw) &&
+    meetsTarget(at(1599), eff) === meetsTarget(at(1599), raw) &&
+    meetsTarget(at(1600), eff) && !meetsTarget(at(1599), eff));
 }
 
 // ---------------------------------------------------------------------------

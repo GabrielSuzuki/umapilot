@@ -29,7 +29,7 @@ import { competentPolicy } from "../policy";
 import type { RunTarget } from "../target";
 import {
   compileTarget, shortfallScore, shortfallByStat, separable,
-  type CompiledTarget, type GoalEstimate, type ObjectiveMode,
+  type CompiledTarget, type GoalEstimate, type ObjectiveMode, type StatValueMode,
 } from "./objective";
 import { goalProbability, stateValue, rolloutTrace, type RolloutOptions, DEFAULT_ROLLOUT } from "./rollout";
 import { shadowPrices, zeroPrices, type ShadowPrices } from "./shadow";
@@ -60,11 +60,11 @@ export interface PlanOptions extends Partial<Omit<BeamOptions, "rollout">> {
   /** Paired rollouts per side of each shadow-price difference. 0 disables pricing. */
   shadowSamples?: number;
   /**
-   * Score stats by race-effective value: everything above 1200 counts half,
-   * because Grand Concert halves it for race mechanics (1600 Speed races as
-   * 1400). Off by default -- see `effectiveStat` in objective.ts.
+   * How to price a stat point: "race-effective" (default) counts everything
+   * above 1200 at half, because that is what a race does with it; "raw" scores
+   * face value. Targets are raw numbers either way -- see `StatValueMode`.
    */
-  raceEffective?: boolean;
+  statValue?: StatValueMode;
   rollout?: Partial<RolloutOptions>;
 }
 
@@ -101,7 +101,7 @@ export function plan(
   options: PlanOptions = {},
 ): PlanResult {
   const t0 = Date.now();
-  const compiled = compileTarget(target, undefined, options.raceEffective);
+  const compiled = compileTarget(target, undefined, options.statValue);
 
   const policyTarget: Partial<Record<Stat, number | null>> = {};
   for (const stat of STATS) policyTarget[stat] = target.stats[stat];
