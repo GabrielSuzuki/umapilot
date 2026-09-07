@@ -49,7 +49,7 @@
 import { mulberry32 } from "../rng";
 import { STATS, tokenTotal, type Token, type TokenVector } from "../../../data/src/types";
 import type { TurnAction, ShopAction } from "../scenario";
-import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concert";
+import { ENERGY_MAX, MOOD_MAX, type GrandConcertScenario, type GcRunState } from "../scenarios/grand-concert";
 import { shortfallScore, type CompiledTarget } from "./objective";
 import { stateValue, type RolloutOptions } from "./rollout";
 import { resourceValue, type ShadowPrices } from "./shadow";
@@ -151,12 +151,63 @@ export function actionKey(a: TurnAction): string {
 }
 
 /** Turn actions to branch on, including companion outings the caller allowed. */
+/**
+ * Actions the model itself makes pointless, and which must not be branched on.
+ *
+ * `legalTurnActions` answers a different question -- what the PLAYER may do --
+ * and is right to include these: the game lets you rest at full energy, and an
+ * engine that claims otherwise is lying about the game. The search is asking
+ * something narrower: what is worth considering. An action whose entire effect
+ * is to raise a resource that is already at its ceiling raises nothing, because
+ * `step` clamps it; the successor differs from the current state only by the
+ * turn counter. It cannot beat any training that gains a single point, and
+ * offering it costs a beam slot.
+ *
+ * That is not a heuristic. It is the arithmetic in `step` read back out, which
+ * is why it lives here as a filter over legal actions rather than as a weight
+ * on their scores.
+ *
+ * It mattered: with these on the menu, the search chose rest at 100 energy and
+ * infirmary at full health inside a measured career -- pure wasted turns that
+ * the leaf estimator's noise made look like the best available play a few
+ * percent of the time. Removing the option removes the failure mode outright,
+ * where tuning the estimator only makes it rarer.
+ *
+ * The infirmary case is the one to revisit. It is dominated only because this
+ * model has no conditions or injuries for it to clear, so it is a +10 energy
+ * button that rest strictly beats. When conditions are modelled it must come
+ * back, and `plan()` says so in its assumptions rather than leaving the
+ * omission silent.
+ */
+function isDominated(state: GcRunState, action: TurnAction): boolean {
+  switch (action.kind) {
+    case "rest":
+      return state.energy >= ENERGY_MAX;
+
+    case "infirmary":
+      // +10 energy and nothing else, against rest's +30 to +50. Strictly worse
+      // whenever rest is available, which is every turn.
+      return true;
+
+    case "recreation":
+      // Energy and mood, both clamped. A companion outing also advances a
+      // friend chain, which is never nothing -- but a bare recreation with both
+      // meters full is.
+      return action.companionCharaId === undefined
+        && state.energy >= ENERGY_MAX
+        && state.mood >= MOOD_MAX;
+
+    default:
+      return false;
+  }
+}
+
 export function turnCandidates(
   scenario: GrandConcertScenario,
   state: GcRunState,
   companions: number[],
 ): TurnAction[] {
-  const base = scenario.legalTurnActions(state);
+  const base = scenario.legalTurnActions(state).filter((a) => !isDominated(state, a));
   if (companions.length === 0) return base;
 
   const status = new Map(scenario.friendChainStatus(state).map((s) => [s.charaId, s]));

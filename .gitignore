@@ -10,3 +10,9 @@ packages/data/generated/*.json
 
 # Never commit the game database itself.
 *.mdb
+
+# Local scratch: one-off diagnostics, probes, and delivered patches.
+# They are how this project works, and none of them belong in history.
+diagnose-*.ts
+probe-*.py
+*.patch

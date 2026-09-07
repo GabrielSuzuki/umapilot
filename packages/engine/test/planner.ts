@@ -229,12 +229,12 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   const scenario = makeScenario();
   const start = scenario.initialState();
 
-  const a = rollout(scenario, start, mulberry32(7), RO);
-  const b = rollout(scenario, start, mulberry32(7), RO);
+  const a = rollout(scenario, start, 7, RO);
+  const b = rollout(scenario, start, 7, RO);
   check("a rollout is deterministic given its seed",
     JSON.stringify(a.stats) === JSON.stringify(b.stats), JSON.stringify(a.stats));
 
-  const c = rollout(scenario, start, mulberry32(8), RO);
+  const c = rollout(scenario, start, 8, RO);
   check("different seeds give different runs",
     JSON.stringify(a.stats) !== JSON.stringify(c.stats));
 
@@ -431,12 +431,12 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   const scenario = makeScenario();
   const start = scenario.initialState();
 
-  const a = rollout(scenario, start, mulberry32(7), RO);
-  const b = rollout(scenario, start, mulberry32(7), RO);
+  const a = rollout(scenario, start, 7, RO);
+  const b = rollout(scenario, start, 7, RO);
   check("a rollout is deterministic given its seed",
     JSON.stringify(a.stats) === JSON.stringify(b.stats), JSON.stringify(a.stats));
 
-  const c = rollout(scenario, start, mulberry32(8), RO);
+  const c = rollout(scenario, start, 8, RO);
   check("different seeds give different runs",
     JSON.stringify(a.stats) !== JSON.stringify(c.stats));
 
@@ -460,7 +460,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
     let purchases = 0;
     let unspent = 0;
     for (const seed of [1, 2, 3]) {
-      const end = rollout(scenario, scenario.initialState(), mulberry32(seed), RO);
+      const end = rollout(scenario, scenario.initialState(), seed, RO);
       purchases += end.scenario.techniquesTotal + end.scenario.songsOwned.length;
       unspent += TOKENS.reduce((a, t) => a + end.scenario.tokens[t], 0);
     }
@@ -476,7 +476,7 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   {
     let techniques = 0;
     for (const seed of [1, 2, 3]) {
-      techniques += rollout(scenario, scenario.initialState(), mulberry32(seed), RO)
+      techniques += rollout(scenario, scenario.initialState(), seed, RO)
         .scenario.techniquesTotal;
     }
     check("the rollout policy still buys techniques", techniques > 0,
@@ -515,6 +515,35 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
     Number.isFinite(p1.energy) && Number.isFinite(p1.mood) && Number.isFinite(p1.bond) &&
     Object.values(p1.tokens).every(Number.isFinite));
 
+  check("every price carries an error bar and the weight it was judged by", (() => {
+    const p = p1;
+    const each: number[][] = [
+      [p.energy, p.stderr.energy, p.raw.energy, p.method.weights.energy],
+      [p.mood, p.stderr.mood, p.raw.mood, p.method.weights.mood],
+      [p.bond, p.stderr.bond, p.raw.bond, p.method.weights.bond],
+      [p.skillPoint, p.stderr.skillPoint, p.raw.skillPoint, p.method.weights.skillPoint],
+      ...TOKENS.map((t) => [p.tokens[t], p.stderr.tokens[t], p.raw.tokens[t], p.method.weights.tokens[t]]),
+    ];
+    return each.every(([v, se, raw, w]) =>
+      Number.isFinite(v!) && Number.isFinite(se!) && se! >= 0 &&
+      w! >= 0 && w! <= 1 &&
+      // Shrinkage only ever moves a price toward zero, never past it or away.
+      Math.abs(v!) <= Math.abs(raw!) + 1e-12 &&
+      (raw! === 0 || (v! / raw!) >= -1e-12));
+  })());
+
+  check("a price indistinguishable from zero is shrunk toward zero", (() => {
+    // Anything whose standard error exceeds its own size must keep less than
+    // half its face value; that is what w = m^2/(m^2+se^2) means at se >= |m|.
+    const p = p1;
+    const pairs: Array<[number, number, number]> = [
+      [p.raw.energy, p.stderr.energy, p.method.weights.energy],
+      [p.raw.mood, p.stderr.mood, p.method.weights.mood],
+      ...TOKENS.map((t) => [p.raw.tokens[t], p.stderr.tokens[t], p.method.weights.tokens[t]] as [number, number, number]),
+    ];
+    return pairs.every(([raw, se, w]) => se <= Math.abs(raw) || w <= 0.5);
+  })());
+
   check("prices carry their method, not just their value",
     p1.method.samples === 4 && p1.method.note.includes("common random numbers"));
 
@@ -535,6 +564,51 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   check("energy is worth less on the last turn than on the first",
     pLate.energy < p1.energy,
     `turn 1: ${p1.energy.toExponential(2)}, turn ${late.turn}: ${pLate.energy.toExponential(2)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Dominated actions are not on the search's menu
+//
+// Each check below is paired with one asserting that the SCENARIO still offers
+// the action, because that is the difference between a filter that works and a
+// fixture that can no longer express the bug. `legalTurnActions` answers "what
+// may the player do"; `turnCandidates` answers "what is worth considering", and
+// only the second is allowed to be opinionated.
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const full = scenario.initialState();            // energy 100 at turn 1
+  const tired = { ...full, energy: 20 };
+
+  const legalFull = new Set(scenario.legalTurnActions(full).map(actionKey));
+  const candFull = new Set(turnCandidates(scenario, full, []).map(actionKey));
+  const candTired = new Set(turnCandidates(scenario, tired, []).map(actionKey));
+
+  check("the scenario still lets the player rest at full energy",
+    legalFull.has(actionKey({ kind: "rest" })));
+  check("the search does not offer rest at full energy",
+    !candFull.has(actionKey({ kind: "rest" })),
+    "step clamps energy at the ceiling, so the turn would buy nothing");
+  check("the search does offer rest when there is energy to regain",
+    candTired.has(actionKey({ kind: "rest" })), "energy 20");
+
+  check("the scenario still lets the player visit the infirmary",
+    legalFull.has(actionKey({ kind: "infirmary" })));
+  check("the search never offers the infirmary while no condition is modelled",
+    !candFull.has(actionKey({ kind: "infirmary" })) &&
+    !candTired.has(actionKey({ kind: "infirmary" })),
+    "+10 energy against rest's +30 to +50, and nothing else to clear");
+
+  check("training is never filtered",
+    STATS.every((f) => candTired.has(actionKey({ kind: "train", facility: f }))));
+
+  const rFull = plan(scenario, full, TARGET, { ...FAST, seed: 5 });
+  check("plan() says why the infirmary is missing rather than silently dropping it",
+    rFull.assumptions.some((a) => a.includes("infirmary")));
+  check("no recommendation is an action that cannot change anything",
+    rFull.recommendations.every((r) =>
+      r.action.kind !== "infirmary" && !(r.action.kind === "rest" && full.energy >= 100)));
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +718,7 @@ function playPolicy(
   seed: number,
   policy = competentPolicy,
 ): GcRunState {
-  return rollout(scenario, scenario.initialState(), mulberry32(seed), { ...RO, policy });
+  return rollout(scenario, scenario.initialState(), seed, { ...RO, policy });
 }
 
 {

@@ -144,6 +144,18 @@ export interface GrandConcertState {
 
 export type GcRunState = RunState<GrandConcertState>;
 
+/**
+ * The bounds every clamp in `step` enforces.
+ *
+ * Named because the planner has to reason about them: an action whose only
+ * effect is to raise a resource that is already at its ceiling does nothing at
+ * all, and a search that cannot see that will branch on it.
+ */
+export const ENERGY_MIN = 0;
+export const ENERGY_MAX = 100;
+export const MOOD_MIN = -2;
+export const MOOD_MAX = 2;
+
 const MOOD_ORDER: Mood[] = ["awful", "bad", "normal", "good", "great"];
 const moodFromIndex = (i: number): Mood => MOOD_ORDER[Math.min(Math.max(i + 2, 0), 4)]!;
 
@@ -490,12 +502,12 @@ export class GrandConcertScenario
           "the true percentage, so it is directly calibratable from logged captures");
 
         if (failed) {
-          next.energy = clamp(next.energy - 10, 0, 100);
-          next.mood = clamp(next.mood - 1, -2, 2) as GcRunState["mood"];
+          next.energy = clamp(next.energy - 10, ENERGY_MIN, ENERGY_MAX);
+          next.mood = clamp(next.mood - 1, MOOD_MIN, MOOD_MAX) as GcRunState["mood"];
         } else {
           for (const stat of STATS) next.stats[stat] += result.gains[stat];
           next.skillPoints += result.skillPoints;
-          next.energy = clamp(next.energy + result.energy, 0, 100);
+          next.energy = clamp(next.energy + result.energy, ENERGY_MIN, ENERGY_MAX);
           for (const a of result.assumptions) addAssumption(s, a);
           this.grantTokens(s, action.facility, placed.length, rng);
           this.growBonds(s, action.facility);
@@ -505,7 +517,7 @@ export class GrandConcertScenario
       }
 
       case "rest":
-        next.energy = clamp(next.energy + 30 + Math.floor(rng() * 21), 0, 100);
+        next.energy = clamp(next.energy + 30 + Math.floor(rng() * 21), ENERGY_MIN, ENERGY_MAX);
         addAssumption(s, "rest energy gain is approximate; master.mdb command 303 gives +30/+20/+10 by variant");
         break;
 
@@ -515,8 +527,8 @@ export class GrandConcertScenario
         // +40 energy +1 mood. Which is offered is the game's choice, so with no
         // destination named we take the middle of the range and say so.
         const dest = this.recreation(action.destination, rng);
-        next.mood = clamp(next.mood + (dest.mood ?? 0), -2, 2) as GcRunState["mood"];
-        next.energy = clamp(next.energy + (dest.energy ?? 0), 0, 100);
+        next.mood = clamp(next.mood + (dest.mood ?? 0), MOOD_MIN, MOOD_MAX) as GcRunState["mood"];
+        next.energy = clamp(next.energy + (dest.energy ?? 0), ENERGY_MIN, ENERGY_MAX);
         if (!action.destination) {
           addAssumption(s, "recreation destination not specified -- averaged across " +
             "the destinations master.mdb offers, which range from +0 to +40 energy");
@@ -540,11 +552,11 @@ export class GrandConcertScenario
       }
 
       case "infirmary":
-        next.energy = clamp(next.energy + 10, 0, 100);
+        next.energy = clamp(next.energy + 10, ENERGY_MIN, ENERGY_MAX);
         break;
 
       case "race":
-        next.energy = clamp(next.energy - 15, 0, 100);
+        next.energy = clamp(next.energy - 15, ENERGY_MIN, ENERGY_MAX);
         next.skillPoints += 20;
         addAssumption(s, "race rewards are a placeholder; races are not modelled yet");
         break;
@@ -617,7 +629,7 @@ export class GrandConcertScenario
     }
     next.skillPoints += mastery.oneOffSkillPoints;
     if (mastery.oneOffEnergy) {
-      next.energy = clamp(next.energy + mastery.oneOffEnergy, 0, 100);
+      next.energy = clamp(next.energy + mastery.oneOffEnergy, ENERGY_MIN, ENERGY_MAX);
     }
     for (const u of mastery.unparsed) {
       addAssumption(s, `unparsed song effect clause, contributing nothing: ${u}`);

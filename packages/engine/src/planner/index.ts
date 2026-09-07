@@ -23,7 +23,7 @@
 
 import { STATS, TOKENS, type Stat } from "../../../data/src/types";
 import type { TurnAction, ShopAction, Recommendation, ValueBreakdown, PlanStep } from "../scenario";
-import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concert";
+import { ENERGY_MAX, type GrandConcertScenario, type GcRunState } from "../scenarios/grand-concert";
 import { mulberry32 } from "../rng";
 import { competentPolicy } from "../policy";
 import type { RunTarget } from "../target";
@@ -214,7 +214,7 @@ export function plan(
   // questions a player has about songs.
   const searched = shopPlan(result.bestPath);
   const projected = result.bestLeaf
-    ? rolloutTrace(scenario, result.bestLeaf, mulberry32(result.bestLeafSeed), ro).buys
+    ? rolloutTrace(scenario, result.bestLeaf, result.bestLeafSeed, ro).buys
     : [];
 
   const steps: PlanStep[] = [
@@ -240,6 +240,14 @@ export function plan(
     ...(beamOpts.companions.length === 0
       ? ["no companions were declared, so recreation is scored as a solo outing " +
          "and no friend-chain deadline is scheduled"]
+      : []),
+    "the search does not offer the infirmary. This model has no conditions or " +
+      "injuries for it to clear, which leaves it a +10 energy action that rest " +
+      "strictly beats on every turn -- so it is excluded as dominated, not " +
+      "evaluated and rejected. It must be restored when conditions are modelled.",
+    ...(state.energy >= ENERGY_MAX
+      ? ["energy is at its ceiling, so rest is not offered this turn: it would " +
+         "clamp to no gain at all"]
       : []),
   ];
 

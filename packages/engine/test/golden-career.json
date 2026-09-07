@@ -1,22 +1,22 @@
 {
-  "digest": "d91be1bdcb1d8185",
+  "digest": "d4986fe111c07a70",
   "summary": {
     "turn": 73,
     "stats": {
-      "speed": 380,
-      "stamina": 330,
-      "power": 327,
-      "guts": 349,
-      "wit": 305
+      "speed": 392,
+      "stamina": 341,
+      "power": 325,
+      "guts": 374,
+      "wit": 316
     },
-    "energy": 39,
-    "skillPoints": 496,
+    "energy": 47,
+    "skillPoints": 328,
     "tokens": {
-      "dance": 16,
-      "passion": 6,
-      "vocal": 2,
-      "visual": 5,
-      "mental": 7
+      "dance": 10,
+      "passion": 56,
+      "vocal": 3,
+      "visual": 3,
+      "mental": 67
     },
     "tokenCaps": {
       "dance": 450,
@@ -25,16 +25,16 @@
       "visual": 450,
       "mental": 450
     },
-    "songsOwned": 4,
-    "techniquesTotal": 40,
+    "songsOwned": 6,
+    "techniquesTotal": 16,
     "concertsHeld": 5,
     "bonds": [
       49,
-      34,
-      61,
-      57,
-      65,
-      30
+      29,
+      26,
+      56,
+      50,
+      60
     ]
   }
 }

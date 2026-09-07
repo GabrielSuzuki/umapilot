@@ -31,29 +31,69 @@
  * against a career whose outcome varies by hundreds of stat points between
  * seeds. Measured with independent randomness the signal is invisible. Measured
  * with the same seeds on both sides, the noise cancels and what is left is the
- * effect. Every function here pairs its samples.
+ * effect. Every function here pairs its samples -- and the pairing is only real
+ * because `rollout` addresses its draws by turn; see the note there.
+ *
+ * A PRICE CARRIES ITS OWN ERROR BAR, AND IS WEIGHTED BY IT.
+ *
+ * This file used to return five bare numbers, in a project whose stated rule is
+ * that a sampled quantity is never rendered without an interval. The prices are
+ * the most heavily sampled quantities in the planner and were the only ones
+ * exempt, and the exemption cost something specific and measurable.
+ *
+ * Measured on real data at 12 samples: the true energy price is about 0.0002
+ * objective units per point, and a single estimate of it has a standard error
+ * of roughly the same size. So the ESTIMATE'S SIGN is close to a coin flip --
+ * across nine states of one career it came back negative on four. `resourceValue`
+ * then multiplies that number by an energy stock of 20-80, which turns a coin
+ * flip into a +/-0.03 term added to interior scores whose real differences are
+ * about +/-0.007. The beam was pruning on noise, four times louder than the
+ * signal, and the interior ranking of rest against training disagreed with a
+ * 200-rollout ground truth on four states out of nine.
+ *
+ * Reading that as "energy is priced too high" is the trap: the draw is just as
+ * often negative, and a session spent chasing the price downward would have been
+ * chasing half of a symmetric distribution. It is a variance problem.
+ *
+ * So each price is now shrunk toward zero by its own measured signal-to-noise,
+ * w = m^2 / (m^2 + se^2): a price measured cleanly is used at face value, a
+ * price indistinguishable from zero is used as nearly zero, and the search falls
+ * back to ordering by shortfall alone rather than by a random number times a
+ * stock. There is no tuning constant in that -- w is computed from the samples
+ * every time, and both the unshrunk value and the standard error are reported.
  */
 
 import { TOKENS, type Token, type TokenVector } from "../../../data/src/types";
 import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concert";
 import type { CompiledTarget } from "./objective";
-import { stateValue, type RolloutOptions } from "./rollout";
+import { stateSamples, type RolloutOptions } from "./rollout";
 
-export interface ShadowPrices {
-  /** Objective units per energy point. */
+/** One price per resource, in objective units per unit of that resource. */
+export interface PriceVector {
   energy: number;
-  /** Objective units per mood step. */
   mood: number;
-  /** Objective units per token, per currency. */
   tokens: TokenVector;
-  /** Objective units per bond point, summed across the deck. */
   bond: number;
-  /** Objective units per skill point. */
   skillPoint: number;
+}
+
+export interface ShadowPrices extends PriceVector {
+  /**
+   * Standard error of each price, same units.
+   *
+   * Read this before reading the price. An `energy` of 0.0006 with an `stderr`
+   * of 0.0005 is not a finding about energy, it is one draw from a distribution
+   * that straddles zero.
+   */
+  stderr: PriceVector;
+  /** The finite differences before shrinkage, for auditing the estimator. */
+  raw: PriceVector;
   /** How the prices were obtained, so a caller never mistakes them for constants. */
   method: {
     samples: number;
     deltas: { energy: number; mood: number; token: number; bond: number; skillPoint: number };
+    /** Shrinkage weight actually applied to each price, in [0, 1]. */
+    weights: PriceVector;
     note: string;
   };
 }
@@ -165,6 +205,40 @@ function bumpSkillPoints(state: GcRunState, by: number): Bump {
   };
 }
 
+/** A price, what it is worth on its own evidence, and how that was judged. */
+interface Priced {
+  /** The price to use: `raw`, shrunk by `weight`. */
+  value: number;
+  se: number;
+  raw: number;
+  weight: number;
+}
+
+/**
+ * Mean of the paired differences, shrunk toward zero by its own signal-to-noise.
+ *
+ * w = m^2 / (m^2 + se^2) is the posterior weight on the measurement when the
+ * prior on the price is centred at zero with a scale of about the measurement
+ * itself -- the honest statement of "I have no idea what this is worth except
+ * what I just measured". It needs no tuning constant, it goes to 1 as the
+ * measurement sharpens, and it goes to 0 exactly when the estimate is
+ * indistinguishable from noise.
+ *
+ * Shrinking toward ZERO specifically, rather than toward some prior price, is
+ * the conservative direction: a price of zero makes the beam order interior
+ * nodes by shortfall alone, which is a worse search but never a search steered
+ * by a random number.
+ */
+function shrink(diffs: number[]): Priced {
+  const n = diffs.length;
+  const m = diffs.reduce((a, b) => a + b, 0) / n;
+  if (n < 2) return { value: m, se: 0, raw: m, weight: 1 };
+  const variance = diffs.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1);
+  const se = Math.sqrt(variance / n);
+  const w = se === 0 ? 1 : (m * m) / (m * m + se * se);
+  return { value: m * w, se, raw: m, weight: w };
+}
+
 /**
  * Price every resource at this state.
  *
@@ -191,38 +265,61 @@ export function shadowPrices(
   // One shared seed base per resource: baseline and perturbed use the SAME
   // seeds, so the two rollouts see the same failures, the same token rolls and
   // the same card placements. Without this the difference is noise.
-  const price = (bump: Bump, salt: number): number => {
-    if (bump.applied === 0) return 0;
+  //
+  // The difference is taken SAMPLE BY SAMPLE rather than between the two means.
+  // Arithmetically that is the same number; statistically it is the difference
+  // between having an error bar and not having one, because the spread of the
+  // paired differences is what says whether the price is measured or guessed.
+  const price = (bump: Bump, salt: number): Priced => {
+    if (bump.applied === 0) return { value: 0, se: 0, raw: 0, weight: 0 };
     const s = seed + salt * 100003;
-    const base = stateValue(scenario, state, target, s, samples, ro);
-    const bumped = stateValue(scenario, bump.state, target, s, samples, ro);
-    return (bumped - base) / bump.applied;
+    const base = stateSamples(scenario, state, target, s, samples, ro);
+    const bumped = stateSamples(scenario, bump.state, target, s, samples, ro);
+    const diffs = base.map((b, i) => (bumped[i]! - b) / bump.applied);
+    return shrink(diffs);
   };
 
-  const tokens = {} as TokenVector;
-  TOKENS.forEach((t, i) => {
-    tokens[t] = price(bumpToken(state, t, D_TOKEN), 10 + i);
-  });
-
-  return {
+  const priced = {
     energy: price(bumpEnergy(state, D_ENERGY), 1),
     mood: price(bumpMood(state, D_MOOD), 2),
-    tokens,
     bond: price(bumpBond(state, D_BOND), 3),
     skillPoint: price(bumpSkillPoints(state, D_SP), 4),
+    tokens: {} as Record<Token, Priced>,
+  };
+  TOKENS.forEach((t, i) => {
+    priced.tokens[t] = price(bumpToken(state, t, D_TOKEN), 10 + i);
+  });
+
+  const pick = (f: (p: Priced) => number): PriceVector => {
+    const tokens = {} as TokenVector;
+    for (const t of TOKENS) tokens[t] = f(priced.tokens[t]);
+    return {
+      energy: f(priced.energy), mood: f(priced.mood), tokens,
+      bond: f(priced.bond), skillPoint: f(priced.skillPoint),
+    };
+  };
+
+  return {
+    ...pick((p) => p.value),
+    stderr: pick((p) => p.se),
+    raw: pick((p) => p.raw),
     method: {
       samples,
       deltas: { energy: D_ENERGY, mood: D_MOOD, token: D_TOKEN, bond: D_BOND, skillPoint: D_SP },
+      weights: pick((p) => p.weight),
       note:
         "finite differences on paired rollouts under common random numbers; " +
         "a resource already at its ceiling is perturbed downward instead, and " +
         "the price is divided by the delta actually applied; units are " +
         "objective-score per resource unit, valid near this state only. " +
-        "A small NEGATIVE price is residual sampling noise, not a finding -- " +
-        "raise the sample count rather than reading meaning into it. A price of " +
-        "exactly zero usually means the resource is not binding here: energy at " +
-        "the last turn, or a token whose supply already exceeds what the shop " +
-        "can absorb.",
+        "Each price is shrunk toward zero by its own signal-to-noise, " +
+        "w = m^2/(m^2+se^2), so a price that cannot be distinguished from zero " +
+        "at this sample count contributes almost nothing to the search instead " +
+        "of contributing a random number times a resource stock; `raw` holds " +
+        "the unshrunk difference and `stderr` the error bar it was judged by. " +
+        "A price of exactly zero usually means the resource is not binding " +
+        "here: energy at the last turn, or a token whose supply already exceeds " +
+        "what the shop can absorb.",
     },
   };
 }
@@ -249,10 +346,16 @@ export function resourceValue(state: GcRunState, prices: ShadowPrices): number {
 
 /** Zero prices. Used when the caller asks for no shadow pass at all. */
 export function zeroPrices(): ShadowPrices {
-  return {
+  const zero = (): PriceVector => ({
     energy: 0, mood: 0, bond: 0, skillPoint: 0,
     tokens: { dance: 0, passion: 0, vocal: 0, visual: 0, mental: 0 },
+  });
+  return {
+    ...zero(),
+    stderr: zero(),
+    raw: zero(),
     method: { samples: 0, deltas: { energy: 0, mood: 0, token: 0, bond: 0, skillPoint: 0 },
+      weights: zero(),
       note: "shadow pricing disabled -- interior ordering is greedy" },
   };
 }

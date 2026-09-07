@@ -13,6 +13,24 @@
  * absolute terms -- a rollout policy that is uniformly mediocre still ranks
  * states correctly, while one that is mediocre only when tired systematically
  * undervalues energy.
+ *
+ * RANDOMNESS IS ADDRESSED, NOT STREAMED. A rollout does not hold one generator
+ * for its whole life. Each turn draws from a generator derived from
+ * (seed, turn), and the shop draws from a second one derived from
+ * (seed, turn, salt).
+ *
+ * That is the difference between common random numbers working and merely being
+ * claimed. Two rollouts compared under one sequential generator -- a baseline
+ * and a state with ten more energy, say -- stay in step only until the first
+ * turn where they act differently. A training draws a failure roll and a token
+ * roll; a rest draws one number. One divergence at turn 3 shifts every draw
+ * after it, so by turn 10 the two runs are seeing unrelated placements and the
+ * measured difference is mostly noise. Addressing the draws by turn means a
+ * divergence costs only that turn: at turn t+1 both runs are back on the same
+ * numbers. What is left in the difference is the decision's real consequence.
+ *
+ * This is what shadow prices and leaf values are differences OF, so it is the
+ * foundation both of them rest on.
  */
 
 import { mulberry32, type Rng } from "../rng";
@@ -28,6 +46,24 @@ import {
 
 /** Hard stop so a modelling bug cannot hang the caller. */
 const MAX_TURNS = 300;
+
+/**
+ * The generator for one turn of one rollout.
+ *
+ * Keyed by the GAME turn rather than by how many steps this rollout has taken,
+ * so two rollouts that reach turn 40 by different routes still draw the same
+ * numbers there. `salt` separates the streams that must not share draws within
+ * a turn -- the turn itself and the shop that follows it.
+ */
+export function turnRng(seed: number, turn: number, salt: number): Rng {
+  // Mixing rather than adding: mulberry32 is a counter-based generator, so
+  // seeds that differ by one produce sequences that differ by one step, and
+  // "the same numbers, offset by one" is precisely the failure being fixed.
+  let h = (seed ^ Math.imul(turn + 1, 0x9e3779b1) ^ Math.imul(salt + 1, 0x85ebca6b)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b) >>> 0;
+  return mulberry32((h ^ (h >>> 16)) >>> 0);
+}
 
 export interface RolloutOptions {
   policy: Policy;
@@ -93,11 +129,17 @@ export function greedyShop(
   return next;
 }
 
-/** Play from `state` to the end of the career (or `truncateAfter` turns). */
+/**
+ * Play from `state` to the end of the career (or `truncateAfter` turns).
+ *
+ * Takes a SEED, not a generator, because the stream discipline is part of what
+ * a rollout is: the caller cannot supply a generator without also supplying the
+ * sequential coupling this is built to avoid.
+ */
 export function rollout(
   scenario: GrandConcertScenario,
   state: GcRunState,
-  rng: Rng,
+  seed: number,
   opts: RolloutOptions,
 ): GcRunState {
   let cur = state;
@@ -107,8 +149,9 @@ export function rollout(
   while (!scenario.isTerminal(cur) && guard++ < MAX_TURNS) {
     if (opts.truncateAfter > 0 && played >= opts.truncateAfter) break;
     const action = opts.policy(cur, { scenario, target: opts.policyTarget });
-    cur = scenario.step(cur, action, rng);
-    cur = greedyShop(scenario, cur, opts.maxBuysPerTurn, rng);
+    const turn = cur.turn;
+    cur = scenario.step(cur, action, turnRng(seed, turn, 0));
+    cur = greedyShop(scenario, cur, opts.maxBuysPerTurn, turnRng(seed, turn, 1));
     played++;
   }
   return cur;
@@ -132,7 +175,7 @@ export function rollout(
 export function rolloutTrace(
   scenario: GrandConcertScenario,
   state: GcRunState,
-  rng: Rng,
+  seed: number,
   opts: RolloutOptions,
 ): { end: GcRunState; buys: Array<{ turn: number; action: ShopAction }> } {
   let cur = state;
@@ -142,14 +185,16 @@ export function rolloutTrace(
 
   while (!scenario.isTerminal(cur) && guard++ < MAX_TURNS) {
     if (opts.truncateAfter > 0 && played >= opts.truncateAfter) break;
-    cur = scenario.step(cur, opts.policy(cur, { scenario, target: opts.policyTarget }), rng);
+    const turn = cur.turn;
+    cur = scenario.step(cur, opts.policy(cur, { scenario, target: opts.policyTarget }), turnRng(seed, turn, 0));
 
+    const shopRng = turnRng(seed, turn, 1);
     for (let i = 0; i < opts.maxBuysPerTurn; i++) {
       const actions = scenario.legalShopActions(cur);
       const pick = actions.find((a) => a.kind === "song") ?? actions.find((a) => a.kind === "technique");
       if (!pick) break;
       buys.push({ turn: cur.turn, action: pick });
-      cur = scenario.buy(cur, pick, rng);
+      cur = scenario.buy(cur, pick, shopRng);
     }
     played++;
   }
@@ -165,6 +210,11 @@ export function rolloutTrace(
  * independent randomness buries a small real difference under sampling noise;
  * comparing them under the same seeds cancels most of that noise out. Every
  * shadow price in this planner depends on it.
+ *
+ * The cancelling is only real because `rollout` addresses its draws by turn.
+ * Sharing a seed between two states that then consume one sequential generator
+ * at different rates cancels nothing past the first divergence, which is how
+ * this estimator came to be read off noise once already.
  */
 export function stateValue(
   scenario: GrandConcertScenario,
@@ -174,12 +224,32 @@ export function stateValue(
   samples: number,
   opts: RolloutOptions,
 ): number {
-  if (samples <= 0) return shortfallScore(state, target);
-  let total = 0;
+  const xs = stateSamples(scenario, state, target, seed, samples, opts);
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+/**
+ * The individual sample scores behind `stateValue`.
+ *
+ * Exposed because a mean without its spread is exactly the thing this planner
+ * keeps getting wrong: the caller that differences two of these needs to know
+ * how much of the difference is real. Sample `i` uses `seed + i` on both sides,
+ * so callers can pair them.
+ */
+export function stateSamples(
+  scenario: GrandConcertScenario,
+  state: GcRunState,
+  target: CompiledTarget,
+  seed: number,
+  samples: number,
+  opts: RolloutOptions,
+): number[] {
+  if (samples <= 0) return [shortfallScore(state, target)];
+  const out: number[] = [];
   for (let i = 0; i < samples; i++) {
-    total += shortfallScore(rollout(scenario, state, mulberry32(seed + i), opts), target);
+    out.push(shortfallScore(rollout(scenario, state, seed + i, opts), target));
   }
-  return total / samples;
+  return out;
 }
 
 /**
@@ -199,7 +269,7 @@ export function goalProbability(
 ): GoalEstimate {
   let hits = 0;
   for (let i = 0; i < samples; i++) {
-    const end = rollout(scenario, state, mulberry32(seed + i), opts);
+    const end = rollout(scenario, state, seed + i, opts);
     if (meetsTarget(end, target)) hits++;
   }
   return goalEstimate(hits, samples);
