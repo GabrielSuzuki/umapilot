@@ -1,0 +1,37 @@
+{"note":"Facility levels observed turn by turn in one real Grand Concert career (Oguri Cap), transcribed from the screenshot capture of 2026-09-05. Source frames are 'Screenshot (N).png'. levels = [speed,stamina,power,guts,wit] as displayed on the training screen BEFORE that turn's training. 'selected' is the facility whose banner was open. Frames that were not training screens (events, races, menus, concert panels) are omitted, and the omission is noted where it breaks a contiguous run.","source":"screenshot-capture","captured":"2026-09-05"}
+{"frame":5,"calendar":"Junior Year Pre-Debut","turnsLeft":11,"selected":"stamina","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":6,"calendar":"Junior Year Pre-Debut","turnsLeft":10,"selected":"wit","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":7,"calendar":"Junior Year Pre-Debut","turnsLeft":9,"selected":"speed","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":8,"calendar":"Junior Year Pre-Debut","turnsLeft":8,"selected":"wit","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":9,"calendar":"Junior Year Pre-Debut","turnsLeft":7,"concertIn":19,"selected":"power","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":10,"calendar":"Junior Year Pre-Debut","turnsLeft":6,"concertIn":18,"selected":"guts","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":11,"calendar":"Junior Year Pre-Debut","turnsLeft":5,"concertIn":17,"selected":"wit","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":12,"calendar":"Junior Year Pre-Debut","turnsLeft":4,"concertIn":16,"selected":null,"note":"Trainee Event: Sleep Deprived — not a training turn"}
+{"frame":13,"calendar":"Junior Year Pre-Debut","turnsLeft":3,"concertIn":15,"selected":"wit","selectedLevel":1,"levels":[1,1,1,1,1]}
+{"frame":14,"calendar":"Junior Year Pre-Debut","turnsLeft":2,"concertIn":14,"selected":"wit","selectedLevel":2,"levels":[1,1,1,1,2],"levelUp":"wit 1->2 after 4 uses (frames 6,8,11,13)"}
+{"frame":15,"calendar":"Junior Year Pre-Debut","turnsLeft":1,"concertIn":13,"selected":"wit","selectedLevel":2,"levels":[1,1,1,1,2]}
+{"frame":16,"calendar":"Junior Year Early Jul","turnsLeft":12,"concertIn":11,"selected":"speed","selectedLevel":1,"levels":[1,1,1,1,2]}
+{"frame":17,"calendar":"Junior Year Late Jul","turnsLeft":11,"concertIn":10,"selected":"stamina","selectedLevel":1,"levels":[1,1,1,1,2]}
+{"frame":18,"calendar":"Junior Year Early Aug","turnsLeft":10,"concertIn":9,"selected":"wit","selectedLevel":2,"levels":[1,1,1,1,2]}
+{"frame":19,"calendar":"Junior Year Late Aug","turnsLeft":9,"concertIn":8,"selected":"speed","selectedLevel":1,"levels":[1,1,1,1,2]}
+{"frame":20,"calendar":"Junior Year Early Sep","turnsLeft":8,"concertIn":7,"selected":"speed","selectedLevel":1,"levels":[1,1,1,1,2]}
+{"frame":21,"calendar":"Junior Year Late Sep","turnsLeft":7,"concertIn":6,"selected":"speed","selectedLevel":2,"levels":[2,1,1,1,2],"levelUp":"speed 1->2 after 4 uses (frames 7,16,19,20)"}
+{"frame":22,"calendar":"Junior Year Early Oct","turnsLeft":6,"selected":null,"note":"Recreation menu — not a training turn"}
+{"frame":23,"calendar":"Junior Year Late Oct","turnsLeft":5,"concertIn":4,"selected":"speed","selectedLevel":2,"levels":[2,1,1,1,2]}
+{"frame":24,"calendar":"Junior Year Early Nov","turnsLeft":4,"concertIn":3,"selected":"wit","selectedLevel":2,"levels":[2,1,1,1,2]}
+{"frame":25,"calendar":"Junior Year Late Nov","turnsLeft":3,"selected":null,"note":"Race: Kyoto Junior Stakes — not a training turn"}
+{"frame":26,"calendar":"Junior Year Early Dec","turnsLeft":2,"concertIn":1,"selected":"wit","selectedLevel":3,"levels":[2,1,1,1,3],"levelUp":"wit 2->3 after 4 uses (frames 14,15,18,24)"}
+{"frame":27,"calendar":"Junior Year Late Dec","turnsLeft":1,"selected":"wit","selectedLevel":3,"levels":[2,1,1,1,3],"note":"concert begins after this turn"}
+{"frame":28,"calendar":"Junior Year Late Dec","selected":null,"note":"Active Concert Bonuses panel — post-concert"}
+{"frame":29,"calendar":"Classic Year Early Jan","turnsLeft":8,"concertIn":11,"selected":"power","selectedLevel":1,"levels":[2,1,1,1,3]}
+{"frame":30,"calendar":"Classic Year Late Jan","turnsLeft":7,"concertIn":10,"selected":"wit","selectedLevel":3,"levels":[2,1,1,1,3]}
+{"frame":31,"calendar":"Classic Year Early Feb","turnsLeft":6,"concertIn":9,"selected":"wit","selectedLevel":3,"levels":[2,1,1,1,3]}
+{"frame":32,"calendar":"Classic Year Late Feb","turnsLeft":5,"concertIn":8,"selected":"stamina","selectedLevel":1,"levels":[2,1,1,1,4],"levelUp":"wit 3->4 after 4 uses (frames 26,27,30,31)"}
+{"frame":33,"calendar":"Classic Year Early Mar","turnsLeft":4,"concertIn":7,"selected":"wit","selectedLevel":4,"levels":[2,1,1,1,4]}
+{"frame":34,"calendar":"Classic Year Late Mar","turnsLeft":3,"concertIn":6,"selected":"wit","selectedLevel":4,"levels":[2,1,1,1,4]}
+{"frame":35,"calendar":"Classic Year Early Apr","turnsLeft":2,"selected":null,"note":"Hype Level panel"}
+{"frame":36,"calendar":"Classic Year Early Apr","turnsLeft":2,"concertIn":5,"selected":"speed","selectedLevel":2,"levels":[2,1,1,1,4]}
+{"frame":37,"calendar":"Classic Year Late Apr","turnsLeft":1,"concertIn":4,"selected":"speed","selectedLevel":2,"levels":[2,1,1,1,4]}
+{"frame":38,"calendar":"Classic Year Late May","turnsLeft":12,"concertIn":2,"selected":"speed","selectedLevel":3,"levels":[3,1,1,1,4],"levelUp":"speed 2->3 after 4 uses (frames 21,23,36,37)","note":"Early May was not captured"}
+{"frame":40,"calendar":"Classic Year Late Jun","turnsLeft":10,"selected":null,"note":"Race — not a training turn; Early Jun was not captured"}
+{"frame":42,"calendar":"Classic Year Early Jul","turnsLeft":9,"concertIn":11,"selected":"wit","selectedLevel":5,"levels":[3,1,1,1,5],"note":"wit 4->5 happened here, but Early May and Early Jun are uncaptured, so the use count for this transition cannot be closed"}

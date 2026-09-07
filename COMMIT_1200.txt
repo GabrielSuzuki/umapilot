@@ -1,0 +1,47 @@
+objective: name the 1200 halving, and say it out loud
+
+Grand Concert raises the stat caps past 1200 and then halves everything
+above that line for race mechanics: 1600 Speed races as 1400. Nothing in
+the engine knew that. `shortfallScore` priced a point at 1500 exactly
+like a point at 500, and OVERSHOOT_WEIGHT paid full rate for going past
+a target, deep into the halved zone.
+
+It is NOT a training penalty. You gain the full points at the full rate;
+they are worth half when raced. `computeTraining` is right as it stands
+and is untouched -- the correction belongs in what a build is WORTH, not
+in what a training yields.
+
+Three changes:
+
+1. `effectiveStat(raw)` and `HALVING_THRESHOLD` in objective.ts, with
+   the reasoning and the provenance attached. The rule is
+   community-sourced (uma.guide's Grand Concert page), not decoded from
+   master.mdb, so it is flagged as such.
+
+2. `CompiledTarget.raceEffective`, plumbed through `plan()` as an
+   option. OFF BY DEFAULT, deliberately: a player who asks for a
+   displayed 1600 -- for the number, or for what it passes down as a
+   spark -- wants raw, and quietly rescoring their goal would be the
+   same class of error as silently optimising around an unreachable
+   target. It is a switch, not a correction.
+
+3. `validateTarget` now warns when a stat target sits above 1200,
+   naming what it races as. This is where it actually matters: the
+   warning fires before 72 turns are spent, which is what that function
+   exists for.
+
+Measured, so the size is on record rather than assumed: with the flag on
+and a 1600-Speed target the search shifts its training mix (sp13/wi26 ->
+sp14/wi19) and ends 93 points higher. But no simulated career currently
+reaches 1200 in ANY stat -- the model tops out near 974 Speed -- so today
+this changes the advice at the margin and nothing else. It starts to
+matter when the simulator can produce builds like a real career's 1635
+Speed, which needs races, events, summer camp and songs first.
+
+The smoke test asserted `validateTarget(...).length === 0` for a legality
+question. That conflated "no problems" with "no errors" and broke on the
+first legitimate warning. It now filters by severity, which is what it
+meant, plus two checks pinning the new warning and its absence at 1200.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013U7hEY1FgqLS8LKB9F2Ez8

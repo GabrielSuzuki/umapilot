@@ -47,6 +47,12 @@ export interface CompiledTarget {
   skillSpNeeded: number;
   /** 0 = stats only, 1 = skills only. */
   skillWeight: number;
+  /**
+   * Score stats by their race-effective value rather than their raw value.
+   * Off by default: the halving is community-sourced, and a user who wants a
+   * displayed 1600 (for sparks, or for the number itself) wants raw.
+   */
+  raceEffective: boolean;
   /** True when the target constrains nothing -- scoring falls back to stat sum. */
   empty: boolean;
 }
@@ -54,6 +60,7 @@ export interface CompiledTarget {
 export function compileTarget(
   target: RunTarget,
   skillsById?: Map<number, SkillEntry>,
+  raceEffective?: boolean,
 ): CompiledTarget {
   const wanted: Array<{ stat: Stat; want: number }> = [];
   for (const stat of STATS) {
@@ -73,6 +80,7 @@ export function compileTarget(
     wanted,
     skillSpNeeded,
     skillWeight: target.skills.length === 0 ? 0 : target.skillWeight,
+    raceEffective: raceEffective ?? false,
     empty: wanted.length === 0 && skillSpNeeded === 0,
   };
 }
@@ -99,6 +107,30 @@ export function compileTarget(
 const OVERSHOOT_WEIGHT = 0.08;
 
 /**
+ * The race-effective value of a raw stat.
+ *
+ * Grand Concert raises the caps past 1200, and the game halves everything above
+ * that line for race purposes: 1600 Speed is treated as 1400. So the last 400
+ * points of a maxed Speed build are worth 200, and a recommender that scores
+ * raw stats is overpaying for every one of them.
+ *
+ * This is NOT a training-gain penalty. You gain the full points; they are worth
+ * half when raced. `computeTraining` is therefore right as it stands and must
+ * not be changed -- the correction belongs here, in what a build is WORTH.
+ *
+ * Community-sourced (uma.guide's Grand Concert page), not decoded from
+ * master.mdb, so it is opt-in via `CompiledTarget.raceEffective` and off by
+ * default until it is confirmed against a logged race.
+ */
+export const HALVING_THRESHOLD = 1200;
+
+export function effectiveStat(raw: number): number {
+  return raw <= HALVING_THRESHOLD
+    ? raw
+    : HALVING_THRESHOLD + (raw - HALVING_THRESHOLD) / 2;
+}
+
+/**
  * Score a state in [0, ~1+], higher is better.
  *
  * Structure: the mean fraction of each stat target that has been met, capped at
@@ -114,16 +146,19 @@ export function shortfallScore(state: GcRunState, target: CompiledTarget): numbe
     // No target given. Fall back to total stats so the search still has a
     // gradient, and let the caller know the number means something different.
     let sum = 0;
-    for (const stat of STATS) sum += state.stats[stat];
+    for (const stat of STATS) {
+      sum += target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
+    }
     return sum / 5000;
   }
 
   let met = 0;
   let over = 0;
   for (const { stat, want } of target.wanted) {
-    const have = state.stats[stat];
-    met += Math.min(1, have / want);
-    if (have > want) over += (have - want) / want;
+    const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
+    const goal = target.raceEffective ? effectiveStat(want) : want;
+    met += Math.min(1, have / goal);
+    if (have > goal) over += (have - goal) / goal;
   }
   const statScore = target.wanted.length === 0
     ? 0

@@ -15,6 +15,7 @@ import {
   type StatVector,
   type SkillEntry,
 } from "../../data/src/types";
+import { effectiveStat, HALVING_THRESHOLD } from "./planner/objective";
 
 // ---------------------------------------------------------------------------
 // The target
@@ -101,6 +102,27 @@ export function validateTarget(
         field: `stats.${stat}`,
         message: `Above this run's ${stat} cap of ${statCaps[stat]}.`,
         severity: "error",
+      });
+    }
+
+    // Grand Concert raises the caps past 1200 and then halves everything above
+    // that line for race mechanics -- 1600 Speed races as 1400. The points are
+    // real and they are gained at full rate; they are worth half when raced. A
+    // target set deep into that zone is a legitimate thing to want (sparks and
+    // the displayed number are raw), but it should be a decision rather than a
+    // surprise, so it is said out loud rather than silently priced at face
+    // value. Community-sourced, not decoded from master.mdb.
+    if (want > HALVING_THRESHOLD) {
+      const effective = Math.round(effectiveStat(want));
+      problems.push({
+        field: `stats.${stat}`,
+        message:
+          `${want} ${stat} races as ${effective}: everything above ` +
+          `${HALVING_THRESHOLD} counts half. The ${want - HALVING_THRESHOLD} ` +
+          `points above the line are worth ` +
+          `${Math.round((want - HALVING_THRESHOLD) / 2)} in a race, and cost ` +
+          `full price in trainings.`,
+        severity: "warning",
       });
     }
   }

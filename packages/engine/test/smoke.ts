@@ -200,9 +200,24 @@ const { caps, source } = effectiveStatCaps(ds.constants.statCaps, scanned);
 check("scanned caps override the scenario base",
   source === "scanned" && caps.stamina === 1366 && caps.power === 1316 &&
   caps.speed === 1600 && caps.guts === 1500 && caps.wit === 1300);
+// Errors specifically: a target above 1200 also draws a WARNING about race
+// halving, which is not a legality question and must not be counted as one.
+const errorsFor = (stamina: number, c: typeof caps) =>
+  validateTarget({ ...target, stats: { ...target.stats, stamina } }, c, byId)
+    .filter((p) => p.severity === "error");
 check("a 1350 stamina target is legal under scanned caps but not the base",
-  validateTarget({ ...target, stats: { ...target.stats, stamina: 1350 } }, caps, byId).length === 0 &&
-  validateTarget({ ...target, stats: { ...target.stats, stamina: 1350 } }, ds.constants.statCaps, byId).length === 1);
+  errorsFor(1350, caps).length === 0 &&
+  errorsFor(1350, ds.constants.statCaps).length === 1);
+
+const warnsFor = (stamina: number, c: typeof caps) =>
+  validateTarget({ ...target, stats: { ...target.stats, stamina } }, c, byId)
+    .filter((p) => p.severity === "warning");
+check("a target above 1200 warns that the excess races at half value",
+  warnsFor(1350, caps).length === 1 &&
+  warnsFor(1350, caps)[0]!.message.includes("1275"),
+  warnsFor(1350, caps)[0]?.message ?? "no warning");
+check("a target at or below 1200 draws no halving warning",
+  warnsFor(1200, caps).length === 0);
 check("with no scan we fall back to the scenario base",
   effectiveStatCaps(ds.constants.statCaps, null).source === "scenario-base");
 
