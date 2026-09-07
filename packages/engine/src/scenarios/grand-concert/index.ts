@@ -25,7 +25,7 @@ import {
 } from "./training";
 import type { RunState, TurnAction, ShopAction, Scenario } from "../../scenario";
 import {
-  LESSON_OFFERS, eligibleSquares, rollOffers,
+  LESSON_OFFERS, drawBoard,
   TIER_GATE_SOURCE, SONG_GATE_SOURCE, OFFER_DRAW_SOURCE,
 } from "./lesson-board";
 
@@ -336,13 +336,12 @@ export class GrandConcertScenario
    */
   private rollBoard(state: GcRunState, rng: Rng): void {
     const s = state.scenario;
-    const pool = eligibleSquares(this.dataset, {
+    s.offers = drawBoard(this.dataset, {
       concertsHeld: s.concertsHeld,
       techniquesThisPhase: s.techniquesThisPhase,
       songsThisPhase: s.songsThisPhase,
       songsOwned: s.songsOwned,
-    });
-    s.offers = rollOffers(pool, rng, LESSON_OFFERS);
+    }, rng, LESSON_OFFERS);
     addAssumption(s, TIER_GATE_SOURCE);
     addAssumption(s, SONG_GATE_SOURCE);
     addAssumption(s, OFFER_DRAW_SOURCE);

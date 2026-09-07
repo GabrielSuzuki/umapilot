@@ -25,7 +25,9 @@ import { compileTarget, shortfallScore, meetsTarget, wilson } from "../src/plann
 import { rollout, greedyShop, stateValue, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
 import { turnCandidates, actionKey } from "../src/planner/beam";
-import { eligibleSquares, classify } from "../src/scenarios/grand-concert/lesson-board";
+import {
+  eligibleTechniques, songUnlocked, drawBoard, classify,
+} from "../src/scenarios/grand-concert/lesson-board";
 import { syntheticDataset, SYNTHETIC_CARDS } from "./fixtures/synthetic-scenario";
 
 let failures = 0;
@@ -316,8 +318,8 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   // concert, and must become reachable after it.
   {
     const eligibleAt = (concertsHeld: number) =>
-      eligibleSquares(dataset, {
-        concertsHeld, techniquesThisPhase: 99, songsThisPhase: 0, songsOwned: [],
+      eligibleTechniques(dataset, {
+        concertsHeld, techniquesThisPhase: 0, songsThisPhase: 0, songsOwned: [],
       });
     const tierOf = (id: number) => {
       const t = dataset.techniques.find((x) => x.id === id);
@@ -342,18 +344,37 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   // Song gating: a song cannot appear until enough techniques have been bought
   // this phase, and the count resets after every concert.
   {
-    const songsEligible = (techniquesThisPhase: number, songsThisPhase = 0) =>
-      eligibleSquares(dataset, {
+    const unlocked = (techniquesThisPhase: number, songsThisPhase = 0) =>
+      songUnlocked(dataset, {
         concertsHeld: 0, techniquesThisPhase, songsThisPhase, songsOwned: [],
-      }).filter((id) => dataset.songs.some((x) => x.id === id)).length;
+      });
 
-    check("no song is offered before any technique is bought",
-      songsEligible(0) === 0, `${songsEligible(0)} songs eligible at 0 techniques`);
-    check("the first song unlocks once the gate is met",
-      songsEligible(1) > 0, `${songsEligible(1)} songs eligible at 1 technique`);
+    check("no song board before any technique is bought", !unlocked(0));
+    check("the first song unlocks once the gate is met", unlocked(1));
     check("the second song needs more than the first",
-      songsEligible(1, 1) === 0 && songsEligible(3, 1) > 0,
+      !unlocked(1, 1) && unlocked(3, 1),
       "gate sequence is cumulative within a phase");
+
+    // A board is all songs or all techniques -- never mixed. Measured over 60
+    // captured boards: 45 technique, 15 song, 0 mixed. Under the uniform-mixing
+    // model this replaced, sixty homogeneous boards in a row is a 3-in-a-billion
+    // event, so this is the single best-evidenced fact about the board.
+    const isSong = (id: number) => dataset.songs.some((x) => x.id === id);
+    let mixed = 0, songBoards = 0, techBoards = 0;
+    for (let seed = 0; seed < 40; seed++) {
+      for (const [t, n] of [[0, 0], [1, 0], [3, 1], [9, 2]] as Array<[number, number]>) {
+        const board = drawBoard(dataset, {
+          concertsHeld: 1, techniquesThisPhase: t, songsThisPhase: n, songsOwned: [],
+        }, mulberry32(seed * 31 + t));
+        const songs = board.filter(isSong).length;
+        if (songs === 0) techBoards++;
+        else if (songs === board.length) songBoards++;
+        else mixed++;
+      }
+    }
+    check("a board is never mixed", mixed === 0,
+      `${techBoards} technique boards, ${songBoards} song boards, ${mixed} mixed`);
+    check("both kinds of board occur", songBoards > 0 && techBoards > 0);
   }
 }
 

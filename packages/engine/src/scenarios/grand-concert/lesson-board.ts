@@ -191,47 +191,89 @@ export interface EligibilityInput {
 }
 
 /**
- * Every square that could appear on the board right now.
+ * Techniques whose tier is currently unlocked.
  *
  * Affordability is deliberately NOT considered. The game shows lessons you
- * cannot afford -- greyed, and schedulable, with the shortfall displayed on the
- * point bar. A pool filtered by what is currently affordable would model a
- * different game, and would hide from the planner exactly the case where saving
- * up is the right play.
+ * cannot afford -- greyed, and schedulable, with the shortfall on the point
+ * bar. Filtering by what is affordable would model a different game and would
+ * hide from the planner exactly the case where saving up is the right play.
  */
-export function eligibleSquares(
+export function eligibleTechniques(
   dataset: GrandConcertDataset,
   state: EligibilityInput,
 ): number[] {
   const out: number[] = [];
-
   for (const tech of dataset.techniques as Technique[]) {
     const c = classify(tech.effect.text);
+    // A square the classifier does not recognise stays available. It must never
+    // silently vanish, which would be the planner refusing to consider a
+    // purchase the player can actually see.
     if (!c) { out.push(tech.id); continue; }
     const gate = TIER_GATE[c.family][c.tier - 1];
     if (gate === null || gate === undefined) continue;
     if (state.concertsHeld >= gate) out.push(tech.id);
   }
-
-  const needed = songGateFor(state.concertsHeld, state.songsThisPhase);
-  if (state.techniquesThisPhase >= needed) {
-    for (const song of dataset.songs as Song[]) {
-      if (!state.songsOwned.includes(song.id)) out.push(song.id);
-    }
-  }
-
   return out;
+}
+
+/** Is the phase's next song unlocked, and is there one left to buy? */
+export function songUnlocked(
+  dataset: GrandConcertDataset,
+  state: EligibilityInput,
+): boolean {
+  const needed = songGateFor(state.concertsHeld, state.songsThisPhase);
+  if (state.techniquesThisPhase < needed) return false;
+  return (dataset.songs as Song[]).some((s) => !state.songsOwned.includes(s.id));
 }
 
 /**
  * Draw the board.
  *
- * Uniform without replacement, which is a MODELLING CHOICE and flagged as one.
- * Nothing in master.mdb describes how the three are picked, and a weighted draw
- * would change which purchases a plan can count on. Logged lesson screens would
- * settle it; until then this is the assumption that adds the least.
+ * ---------------------------------------------------------------------------
+ * A board is entirely songs OR entirely techniques. Never mixed.
+ * ---------------------------------------------------------------------------
+ *
+ * The first version of this drew three uniformly from one pool holding both,
+ * flagged as the assumption that added least. A full run of 60 captured boards
+ * refutes it outright: 45 all-technique, 15 all-song, and **zero mixed**. Under
+ * one uniform pool a homogeneous board has probability 0.72, so sixty in a row
+ * is a 3-in-a-billion event.
+ *
+ * What actually happens is simpler than any weighting scheme. The board shows
+ * techniques until the phase's technique-count gate for the next song is met;
+ * then it shows songs until one is bought, which resets the counter. The first
+ * four gaps in the captured run are 1, 2, 3, 4 techniques -- the documented
+ * first-phase gate sequence exactly.
+ *
+ * This matters well beyond fidelity. Under uniform mixing a song had to win a
+ * lottery against ~180 techniques, so a modelled career learned two songs where
+ * a real one learns most of them. Here a song is GUARANTEED to be offered once
+ * its gate is met, which is why the real game's song count is reachable at all.
  */
-export function rollOffers(pool: number[], rng: Rng, count = LESSON_OFFERS): number[] {
+export function drawBoard(
+  dataset: GrandConcertDataset,
+  state: EligibilityInput,
+  rng: Rng,
+  count = LESSON_OFFERS,
+): number[] {
+  if (songUnlocked(dataset, state)) {
+    const unowned = (dataset.songs as Song[])
+      .filter((s) => !state.songsOwned.includes(s.id))
+      .map((s) => s.id);
+    return sample(unowned, rng, count);
+  }
+  return sample(eligibleTechniques(dataset, state), rng, count);
+}
+
+/**
+ * Uniform without replacement, WITHIN whichever pool is showing.
+ *
+ * Still a modelling choice: nothing says the three techniques are picked
+ * evenly, and the captured run has too few boards per family to test it. But it
+ * is now a much smaller assumption than before -- it no longer decides whether
+ * songs appear at all, only which three of a kind are shown.
+ */
+function sample(pool: number[], rng: Rng, count: number): number[] {
   if (pool.length <= count) return [...pool];
   const bag = [...pool];
   const out: number[] = [];
@@ -244,6 +286,7 @@ export function rollOffers(pool: number[], rng: Rng, count = LESSON_OFFERS): num
 }
 
 export const OFFER_DRAW_SOURCE =
-  "the three offers are drawn uniformly without replacement from everything " +
-  "currently eligible; master.mdb does not say how the game picks them, so " +
-  "any weighting is unmodelled";
+  "a board is all songs or all techniques, never mixed -- measured over 60 " +
+  "captured boards from one run (45 technique, 15 song, 0 mixed). Songs appear " +
+  "once the phase's technique-count gate is met and stay until one is bought. " +
+  "Which three of a kind are shown is still modelled as a uniform draw.";
