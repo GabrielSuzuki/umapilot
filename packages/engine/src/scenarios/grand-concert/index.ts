@@ -197,6 +197,11 @@ export class GrandConcertScenario
     name?: string; kind?: string; variants?: Array<{ energy?: number; mood?: number }>;
   }>;
   private readonly caps: StatVector;
+  /**
+   * `L` in the performance-point grant: how many cards in THIS deck are linked
+   * to this scenario. Fixed for the run, so computed once.
+   */
+  private readonly linkedCardCount: number;
   private readonly songBonusCache = new Map<
     string,
     { stats: Partial<Record<Stat, number>>; skillPoints: number }
@@ -247,6 +252,11 @@ export class GrandConcertScenario
       memberCount: o.memberOutings?.length ?? 0,
     }));
     this.caps = { ...dataset.constants.statCaps, ...setup.statCaps };
+
+    // Datasets extracted before 2026-09-07 carry no link list, so L is 0 there
+    // -- exactly the old behaviour rather than a silently wrong answer.
+    const linked = new Set(dataset.scenarioLinkedCards?.cardIds ?? []);
+    this.linkedCardCount = setup.cards.filter((c) => linked.has(c.cardId)).length;
 
     // Refuse a deck the game will not let the player field. Modelling it would
     // produce a confident recommendation for a run that cannot happen.
@@ -683,12 +693,35 @@ export class GrandConcertScenario
     }
 
     // PerformanceToken = floor((S + F) * 1.15^C + 2L). S is 5 for Wit, 9
-    // otherwise; F is facility level; C is the support count; L is the number of
-    // scenario-linked cards, which we do not track yet.
+    // otherwise; F is facility level; C is the support count on this facility;
+    // L is the number of scenario-linked cards in the deck.
+    //
+    // The 2L term was omitted entirely until 2026-09-07, because nothing said
+    // which cards were linked. It is not a rounding detail: measured against a
+    // real career (60 captured lesson boards, >=1325 points earned, ~59
+    // purchases) the model earned roughly HALF, bought 15 lessons, and spent 64
+    // of 72 turns unable to afford anything on the board.
+    //
+    // `single_mode_special_chara` names the five linked characters for this
+    // scenario, resolved through support_card_data to 17 cards. That part is
+    // extracted. The 2L coefficient is community-sourced, and so is the reading
+    // that L counts linked cards DECK-WIDE rather than only those sitting on
+    // the facility being trained -- the two differ a lot on a deck where the
+    // linked cards cluster, and one logged run separates them.
     const S = facility === "wit" ? 5 : 9;
     const F = s.facilityLevels[facility];
-    const amount = Math.floor((S + F) * Math.pow(1.15, cardCount));
-    addAssumption(s, "token gain omits the scenario-link term (2L); linked cards are not tracked yet");
+    const L = this.linkedCardCount;
+    const amount = Math.floor((S + F) * Math.pow(1.15, cardCount) + 2 * L);
+    if (L > 0) {
+      addAssumption(s,
+        `token gain includes the scenario-link term 2L with L=${L} deck-wide. ` +
+        `Which cards are linked is extracted from single_mode_special_chara; the ` +
+        `2L coefficient and the deck-wide reading of L are community-sourced.`);
+    } else if (!this.dataset.scenarioLinkedCards) {
+      addAssumption(s,
+        "token gain omits the scenario-link term (2L) -- this dataset predates " +
+        "the link list; re-run `npm run extract`");
+    }
 
     s.tokens[token] = Math.min(s.tokens[token] + amount, s.tokenCaps[token]);
   }

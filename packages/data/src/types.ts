@@ -105,10 +105,33 @@ export interface DatasetSource {
   extractedAt: string;
 }
 
+/**
+ * Support cards linked to this scenario.
+ *
+ * `L` in the performance-point grant `floor((S + F) * 1.15^C + 2L)`. Until the
+ * link list was located in `single_mode_special_chara`, L was simply omitted --
+ * and a modelled career earned roughly half the performance points a real one
+ * does.
+ *
+ * The link is extracted. The `2L` coefficient is not: it is community-sourced,
+ * as is whether L counts linked cards deck-wide or only those on the facility
+ * being trained. Hence `verified: false`.
+ */
+export interface ScenarioLinkedCards {
+  charaIds: number[];
+  charaNames: Array<string | null>;
+  cards: Array<{ cardId: number; charaId: number; rarity: number; name: string | null }>;
+  cardIds: number[];
+  semantics: string;
+  verified: boolean;
+}
+
 export interface GrandConcertDataset {
   schemaVersion: 1;
   scenario: "grand-concert";
   source: DatasetSource;
+  /** Absent on datasets extracted before 2026-09-07. */
+  scenarioLinkedCards?: ScenarioLinkedCards;
   constants: GrandConcertConstants;
   concerts: Concert[];
   techniques: Technique[];

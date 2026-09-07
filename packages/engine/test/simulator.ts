@@ -489,6 +489,73 @@ check("an interpolated level sits between the two known ones",
 }
 
 // ---------------------------------------------------------------------------
+// The scenario-link term, L
+// ---------------------------------------------------------------------------
+
+/*
+ * `floor((S + F) * 1.15^C + 2L)` -- L counts scenario-linked cards, and it was
+ * omitted entirely until the link list was located, because nothing said which
+ * cards were linked. Measured against a real career (60 captured lesson boards,
+ * >=1325 points earned, ~59 purchases) the model earned roughly half as much
+ * and bought 15 lessons.
+ *
+ * The link list is extracted. The 2L coefficient is not.
+ */
+{
+  const linked = dataset.scenarioLinkedCards;
+  check("the scenario link list is extracted", !!linked,
+    linked
+      ? `${linked.charaIds.length} characters, ${linked.cardIds.length} cards`
+      : "absent -- re-run `npm run extract`");
+
+  if (linked) {
+    check("the link list names characters and resolves them to cards",
+      linked.charaIds.length > 0 && linked.cardIds.length >= linked.charaIds.length,
+      `${linked.charaNames.filter(Boolean).join(", ")}`);
+    check("the link is extracted but its coefficient is not claimed as verified",
+      linked.verified === false && linked.semantics.includes("community-sourced"));
+
+    // The example deck holds two linked cards, so L is exercised rather than
+    // sitting at zero -- a term that is never non-zero in any test is a term
+    // nothing is checking.
+    const deck = CARDS.filter((c) => linked.cardIds.includes(c.cardId));
+    check("the example deck contains linked cards", deck.length > 0,
+      `L=${deck.length}: ${deck.map((c) => c.cardId).join(", ")}`);
+
+    // Same deck, same seed, with and without the link list: the only difference
+    // is 2L per training, so tokens must rise and nothing else may.
+    const withL = makeScenario();
+    const noLinkDataset: GrandConcertDataset = { ...dataset };
+    delete (noLinkDataset as { scenarioLinkedCards?: unknown }).scenarioLinkedCards;
+    const withoutL = new GrandConcertScenario(noLinkDataset, {
+      cards: CARDS,
+      startingStats: { speed: 109, stamina: 196, power: 119, guts: 92, wit: 92 },
+      statCaps: { stamina: 1366, power: 1316 },
+      growthRate: { stamina: 20 },
+      facilityLevels: { speed: 3, stamina: 2, power: 2, guts: 1, wit: 3 },
+    });
+
+    const earned = (sc: GrandConcertScenario) => {
+      let st = sc.initialState();
+      const rng = mulberry32(777);
+      let total = 0;
+      for (let i = 0; i < 40; i++) {
+        const before = TOKENS.reduce((a, t) => a + st.scenario.tokens[t], 0);
+        st = sc.step(st, { kind: "train", facility: "speed" }, rng);
+        total += TOKENS.reduce((a, t) => a + st.scenario.tokens[t], 0) - before;
+      }
+      return total;
+    };
+
+    const a = earned(withoutL);
+    const b = earned(withL);
+    check("the link term raises performance point income", b > a,
+      `${a} points over 40 trainings without L, ${b} with L=${deck.length} ` +
+      `(+${(((b - a) / Math.max(1, a)) * 100).toFixed(0)}%)`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The shop, on real data
 // ---------------------------------------------------------------------------
 

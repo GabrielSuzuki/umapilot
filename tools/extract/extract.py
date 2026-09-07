@@ -937,6 +937,66 @@ class Extractor:
 
         return out
 
+    def scenario_linked_cards(self) -> dict:
+        """Support cards LINKED to this scenario, via `single_mode_special_chara`.
+
+        The performance-point grant per training is, per community sources,
+
+            floor((S + F) * 1.15^C + 2L)
+
+        where L counts scenario-linked cards. Until now L was simply omitted --
+        flagged in every projection as unmodelled -- because nothing identified
+        which cards were linked. `single_mode_special_chara` does: 11 rows,
+        keyed by scenario_id, naming five characters for Grand Concert (Smart
+        Falcon, Agnes Tachyon, Silence Suzuka, Mihono Bourbon, Light Hello).
+
+        A deck holds CARDS, not characters, so those chara ids are resolved
+        through `support_card_data.chara_id` to the 17 cards that count.
+
+        WHAT IS EXTRACTED AND WHAT IS NOT. The identity of the linked characters
+        is now a fact from the database. The `2L` coefficient is NOT -- it is
+        community-sourced, and so is whether L counts linked cards in the whole
+        deck or only those on the facility being trained. Both readings are
+        recorded; the engine applies the deck-wide one and says so.
+        """
+        rows = list(self.db.execute(
+            "SELECT id, scenario_id, chara_id FROM single_mode_special_chara "
+            "ORDER BY scenario_id, id"
+        ))
+        by_scenario: dict[int, list[int]] = {}
+        for _id, scenario_id, chara_id in rows:
+            by_scenario.setdefault(scenario_id, []).append(chara_id)
+
+        charas = by_scenario.get(GRAND_CONCERT_SCENARIO_ID, [])
+        cards = []
+        if charas:
+            qs = ",".join("?" * len(charas))
+            for card_id, chara_id, rarity in self.db.execute(
+                f"SELECT id, chara_id, rarity FROM support_card_data "
+                f"WHERE chara_id IN ({qs}) ORDER BY chara_id, rarity DESC",
+                charas,
+            ):
+                cards.append({
+                    "cardId": card_id,
+                    "charaId": chara_id,
+                    "rarity": rarity,
+                    "name": self.strip_markup(self.text(TEXT_SUPPORT_CARD_FULL, card_id)),
+                })
+
+        return {
+            "charaIds": charas,
+            "charaNames": [self.strip_markup(self.text(TEXT_CHARA_NAME, c)) for c in charas],
+            "cards": cards,
+            "cardIds": [c["cardId"] for c in cards],
+            "semantics": (
+                "characters linked to this scenario, from single_mode_special_chara. "
+                "The link itself is extracted; the 2L coefficient in the performance "
+                "point formula is community-sourced, as is whether L counts linked "
+                "cards deck-wide or only on the trained facility."
+            ),
+            "verified": False,
+        }
+
     def scenario_restrictions(self) -> dict:
         """Support cards BANNED from a scenario by `single_mode_restrict_support`.
 
@@ -1220,6 +1280,7 @@ def main() -> None:
     techniques = ex.techniques()
     outings = ex.outing_chains()
     restrictions = ex.scenario_restrictions()
+    linked = ex.scenario_linked_cards()
     songs = ex.songs()
     concerts = ex.concerts()
 
@@ -1258,6 +1319,7 @@ def main() -> None:
         # the friend subset of outingChains.
         "friendEvents": [o for o in outings if o["kind"] == "friend"],
         "scenarioRestrictions": restrictions,
+        "scenarioLinkedCards": linked,
         "concerts": [asdict(c) for c in concerts],
         "techniques": [asdict(t) for t in techniques],
         "songs": [asdict(s) for s in songs],
