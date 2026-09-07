@@ -165,14 +165,27 @@ export function trainingValue(
   const immediate = gainValue(state, target, base.gains, base.skillPoints);
 
   // --- the level term -------------------------------------------------------
+  //
+  // Bounded by the levels that are actually left. `future` is how many more
+  // trainings this run expects to spend here, and it is routinely far more than
+  // the facility can still use: at level 4 only four more uses buy anything at
+  // all, because `levelUpFacility` caps at MAX_FACILITY_LEVEL. Pricing
+  // `future / USES_PER_LEVEL` levels when only `MAX - current` exist over-values
+  // concentration, and over-values it MOST on a facility that is nearly capped.
+  //
+  // That was not a rounding error. Unbounded, `valuePolicy`'s sign flipped with
+  // the starting facility levels -- +79 at all-1, -76 at all-2, -12 at all-3,
+  // +80 at all-4, every one of them significant at n=1500 -- and the flips
+  // tracked how much rainbow it gave up chasing levels it could never reach.
   let level = 0;
   const current = s.facilityLevels[facility];
   if (current < MAX_FACILITY_LEVEL) {
     const up = scenario.previewTraining(state, facility, { facilityLevel: current + 1 });
     const delta: Partial<Record<Stat, number>> = {};
     for (const stat of STATS) delta[stat] = up.gains[stat] - base.gains[stat];
+    const usesLeftToCap = (MAX_FACILITY_LEVEL - current) * USES_PER_LEVEL;
     level = gainValue(state, target, delta, up.skillPoints - base.skillPoints)
-      * future / USES_PER_LEVEL;
+      * Math.min(future, usesLeftToCap) / USES_PER_LEVEL;
   }
 
   // --- the bond term --------------------------------------------------------
