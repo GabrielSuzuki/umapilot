@@ -70,8 +70,34 @@ export interface BeamOptions {
   /** Independent root determinizations to average over. */
   worlds: number;
   maxBuysPerTurn: number;
-  /** Rollouts per leaf. Leaves share seeds, so 1 is not as noisy as it sounds. */
+  /**
+   * Rollouts averaged per leaf.
+   *
+   * Was 1, on the reasoning that leaves share a seed so common random numbers
+   * would cancel the variance. Measured on real data, they do not: the rollout
+   * re-rolls card placement every turn and different leaf states consume the
+   * generator at different rates, so the draws desynchronise within a few steps
+   * -- over exactly the horizon where the signal lives.
+   *
+   * The signal being ranked is one training on a 3-card facility versus a
+   * 1-card one, worth 5-15 stat points. The leaf value is a career whose spread
+   * across seeds is 200+ points. At one sample that is a 1:20 signal-to-noise
+   * ratio, and the resulting ranking was close to random: the search picked
+   * facilities with 1.29 cards on them when 2.53 were available, barely better
+   * than choosing blind.
+   */
   leafSamples: number;
+  /**
+   * Turns of rollout behind each leaf value. 0 plays to the end of the career.
+   *
+   * The other half of the variance fix. The beam has already searched `horizon`
+   * turns explicitly; the leaf only has to value the near future, and a
+   * full-career rollout contributes far more variance than signal past a point.
+   *
+   * This is deliberately NOT applied to the reported goal probability, which
+   * must play to turn 72 or it does not mean what it says.
+   */
+  leafTruncate: number;
   seed: number;
   rollout: RolloutOptions;
   /**
@@ -91,7 +117,8 @@ export const DEFAULT_BEAM: Omit<BeamOptions, "rollout"> = {
   horizon: 6,
   worlds: 4,
   maxBuysPerTurn: 2,
-  leafSamples: 1,
+  leafSamples: 8,
+  leafTruncate: 15,
   seed: 1,
   companions: [],
 };
@@ -311,11 +338,16 @@ export function beamSearch(
 
     // Leaf evaluation. Leaves share a seed base for the same reason siblings do.
     const leafSeed = (worldSeed ^ 0x5f356495) >>> 0;
+    // Leaf evaluation runs on a truncated rollout; the goal probability
+    // reported at the root does not, and must not.
+    const leafRollout = opts.leafTruncate > 0
+      ? { ...opts.rollout, truncateAfter: opts.leafTruncate }
+      : opts.rollout;
     const bestForRoot = new Map<string, { v: number; path: PlannedAction[] }>();
 
     for (const leaf of frontier) {
       if (leaf.rootKey === null || leaf.rootAction === null) continue;
-      const v = stateValue(scenario, leaf.state, target, leafSeed, opts.leafSamples, opts.rollout);
+      const v = stateValue(scenario, leaf.state, target, leafSeed, opts.leafSamples, leafRollout);
       rollouts += opts.leafSamples;
       const cur = bestForRoot.get(leaf.rootKey);
       if (!cur || v > cur.v) bestForRoot.set(leaf.rootKey, { v, path: leaf.path });

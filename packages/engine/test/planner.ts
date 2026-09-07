@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
 import { mulberry32 } from "../src/rng";
 import { GrandConcertScenario, type GcRunState } from "../src/scenarios/grand-concert";
-import { competentPolicy, focusedPolicy } from "../src/policy";
+import { competentPolicy, focusedPolicy, type Policy } from "../src/policy";
 import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
 import { compileTarget, shortfallScore, meetsTarget, wilson } from "../src/planner/objective";
@@ -673,6 +673,34 @@ function playPolicy(
   // about the game. What must hold is that the search is not WORSE -- a search
   // that loses to its own rollout policy is broken, and that is a bug this
   // exact test is meant to catch on the day it appears.
+  // A one-line "train wherever the most cards are sitting" heuristic. This is
+  // the bar that actually matters, and for a while the search did not clear it:
+  // measured on real data it trained facilities holding 1.29 cards when 2.53
+  // were available, and lost to this on both token income and final stats.
+  //
+  // The cause was the leaf estimator, not the objective. A 5-15 point signal
+  // was being read from a single rollout whose spread across seeds is 200+.
+  // Averaging more leaves and truncating their horizon fixed the ranking; an
+  // inflated energy shadow price, corrupted by the same noise, was separately
+  // making rest outscore training at the interior.
+  const placementGreedy: Policy = (st) => {
+    if (st.energy < 30) return { kind: "rest" };
+    let pick: Stat = "speed";
+    let best = -1;
+    for (const stat of STATS) {
+      const n = st.scenario.placement[stat].length;
+      if (n > best) { best = n; pick = stat; }
+    }
+    return { kind: "train", facility: pick };
+  };
+  const meanPlacement =
+    SEEDS.reduce((a, s) => a + shortfallScore(playPolicy(makeScenario(), s, placementGreedy), compiled), 0)
+    / SEEDS.length;
+
+  check("the search beats a placement-greedy heuristic",
+    meanSearch >= meanPlacement * 0.98,
+    `search ${meanSearch.toFixed(4)} vs placement-greedy ${meanPlacement.toFixed(4)}`);
+
   check("the search is at least as good as the policy it falls back on",
     meanSearch >= meanPolicy * 0.98,
     `search ${meanSearch.toFixed(4)} vs policy ${meanPolicy.toFixed(4)}, ` +

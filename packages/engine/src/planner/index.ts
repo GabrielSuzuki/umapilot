@@ -114,16 +114,34 @@ export function plan(
     worlds: options.worlds ?? DEFAULT_BEAM.worlds,
     maxBuysPerTurn: options.maxBuysPerTurn ?? DEFAULT_BEAM.maxBuysPerTurn,
     leafSamples: options.leafSamples ?? DEFAULT_BEAM.leafSamples,
+    leafTruncate: options.leafTruncate ?? DEFAULT_BEAM.leafTruncate,
     seed: options.seed ?? DEFAULT_BEAM.seed,
     companions: options.companions ?? DEFAULT_BEAM.companions,
     rollout: ro,
   };
 
   const objective: ObjectiveMode = options.objective ?? "hybrid";
-  const shadowSamples = options.shadowSamples ?? 6;
+  const shadowSamples = options.shadowSamples ?? 12;
 
+  // Shadow prices are finite differences on the SAME rollout value function the
+  // leaves use, so the same noise corrupts them -- and an inflated price is
+  // worse than a noisy leaf, because `resourceValue` adds it to every interior
+  // score and so steers what the beam keeps.
+  //
+  // Measured on real data before this: the energy price came out ~10x its
+  // plausible value (0.0019 per point against ~0.0002 implied by "100 energy
+  // buys four or five trainings"). At that price a rest scored 2.2x better than
+  // a training at the interior, rest-heavy lines dominated the beam, and the
+  // search trained 40 times in a career where a one-line heuristic trained 51.
+  //
+  // Same treatment: more samples, and the truncated horizon.
+  const shadowRollout = beamOpts.leafTruncate > 0
+    ? { ...ro, truncateAfter: beamOpts.leafTruncate }
+    : ro;
   const prices = shadowSamples > 0
-    ? shadowPrices(scenario, state, compiled, { samples: shadowSamples, seed: beamOpts.seed, rollout: ro })
+    ? shadowPrices(scenario, state, compiled, {
+        samples: shadowSamples, seed: beamOpts.seed, rollout: shadowRollout,
+      })
     : zeroPrices();
 
   const result = beamSearch(scenario, state, compiled, prices, beamOpts);
@@ -139,7 +157,8 @@ export function plan(
   // confident pick. Reporting the raw leaf value instead would look like a
   // score and mean nothing on its own.
   const baseline = stateValue(
-    scenario, state, compiled, (beamOpts.seed ^ 0x5f356495) >>> 0, beamOpts.leafSamples, ro,
+    scenario, state, compiled, (beamOpts.seed ^ 0x5f356495) >>> 0,
+    beamOpts.leafSamples, shadowRollout,
   );
 
   // Goal probability for the actions a human will actually look at. Every
