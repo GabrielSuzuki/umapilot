@@ -22,12 +22,40 @@ import {
 import {
   computeTraining, resolveBaseTraining, isRainbow,
   MOOD_VALUES, type Mood, type PlacedCard, type FacilityTable,
+  type TrainingResult,
 } from "./training";
 import type { RunState, TurnAction, ShopAction, Scenario } from "../../scenario";
 import {
   LESSON_OFFERS, drawBoard,
   TIER_GATE_SOURCE, SONG_GATE_SOURCE, OFFER_DRAW_SOURCE,
 } from "./lesson-board";
+
+/**
+ * Facility progression, in one place because two callers need the same numbers.
+ *
+ * `levelUpFacility` and `growBonds` apply them; the song planner prices a
+ * training against them, since a training buys progress toward a level-up and
+ * toward rainbow as well as the stat points on the screen. Those two terms are
+ * the compounding half of what a training is worth, and a planner that scores
+ * only the visible gain will trade them away for anything at all.
+ *
+ * Both are approximations and flagged as such wherever they are applied: one
+ * level per four uses, +7 bond on a card's own facility and +5 elsewhere.
+ */
+export const USES_PER_LEVEL = 4;
+export const MAX_FACILITY_LEVEL = 5;
+export const BOND_GAIN_OWN = 7;
+export const BOND_GAIN_OTHER = 5;
+export const MAX_BOND = 100;
+
+/**
+ * Mean energy a Rest returns: `30 + floor(rng * 21)`, so 30 + 10.
+ *
+ * Exported because pricing energy needs it and a second copy would drift. The
+ * gain itself is approximate -- master.mdb command 303 gives +30/+20/+10 by
+ * variant and which variant fires is not modelled.
+ */
+export const REST_ENERGY_MEAN = 40;
 
 /** The Grand Concert scenario id in master.mdb. */
 const GRAND_CONCERT_SCENARIO_ID = 3;
@@ -330,6 +358,16 @@ export class GrandConcertScenario
         );
       }
     }
+  }
+
+  /** Turns in a full career. */
+  get careerTurns(): number {
+    return this.dataset.constants.careerTurns;
+  }
+
+  /** The song catalogue, for callers that price songs rather than buy them. */
+  get songs(): GrandConcertDataset["songs"] {
+    return this.dataset.songs;
   }
 
   get statCaps(): StatVector {
@@ -734,6 +772,98 @@ export class GrandConcertScenario
     return next;
   }
 
+  /**
+   * What a training would yield right now, without taking it.
+   *
+   * The same call `step` makes, lifted out so callers other than `step` can ask
+   * the question. Two of them need to:
+   *
+   *   - a UI showing the five facilities with their projected gains, which is
+   *     what the training screen itself shows;
+   *   - the song planner, which prices a song by asking this twice -- once with
+   *     the song owned and once without -- and taking the difference. That is a
+   *     measurement rather than a guess about how a "Training Speed Gain +1"
+   *     composes with the mood, growth, friendship and count multipliers that
+   *     sit above it. It composes multiplicatively with all of them, which is
+   *     why an early song is worth several times a late one, and why nothing
+   *     short of running the formula gets the number right.
+   *
+   * `opts.songsOwned` and `opts.facilityLevel` override the state's own, which
+   * is the whole point for the second caller: the song planner asks "what would
+   * this training pay with one more song?" and "with this facility one level
+   * higher?", and both answers are differences of this function against itself.
+   * Everything not overridden -- placement, bonds, mood, energy -- is the
+   * state's.
+   *
+   * Deterministic. Failure is not rolled and not applied -- this is the
+   * *successful* outcome, which is what the game displays too. Multiply by
+   * (1 - failureChanceFor) if an expected value is wanted.
+   */
+  previewTraining(
+    state: GcRunState,
+    facility: Stat,
+    opts: { songsOwned?: number[]; facilityLevel?: number } = {},
+  ): TrainingResult {
+    const s = state.scenario;
+    const songs = this.songBonuses(opts.songsOwned ?? s.songsOwned);
+    const concert = this.concertBonuses(s.concertBonusesActive);
+    const camp = isCampTurn(state.turn);
+    return computeTraining({
+      facility,
+      facilityLevel: opts.facilityLevel
+        ?? (camp ? CAMP_LEVEL : s.facilityLevels[facility]),
+      songBonuses: songs.stats,
+      songSkillPointBonus: songs.skillPoints,
+      concertFriendshipBonus: concert.friendshipTrainingEffectiveness,
+      mood: moodFromIndex(state.mood),
+      growthRate: s.growthRate,
+      cards: this.placedCards(state, facility),
+      facilityTable: this.facilityTable,
+      statCaps: this.caps,
+      currentStats: state.stats,
+    });
+  }
+
+  /**
+   * Expected performance-point income from training `facility` right now.
+   *
+   * The payout formula and the currency-roll weights live in `grantTokens`,
+   * which is where they are applied. This is the same arithmetic read out
+   * rather than rolled, and it exists so that nothing outside this file has to
+   * restate it. A planner that needs to know "how fast am I earning vocal?" and
+   * carries its own copy of `floor((S + F) * 1.15^C + 2L)` will be wrong the
+   * first time that formula is corrected, and wrong silently.
+   *
+   * `expected` is the per-currency mean, so it already includes the rainbow
+   * doubling: a rainbow training rolls twice, so each currency's expectation is
+   * doubled rather than one currency's payout being.
+   */
+  tokenYield(
+    state: GcRunState,
+    facility: Stat,
+  ): { amount: number; expected: TokenVector; rainbow: boolean } {
+    const s = state.scenario;
+    const placed = this.placedCards(state, facility);
+    const S = facility === "wit" ? 5 : 9;
+    const F = isCampTurn(state.turn) ? CAMP_LEVEL : s.facilityLevels[facility];
+    const amount = Math.floor(
+      (S + F) * Math.pow(1.15, placed.length) + 2 * this.linkedCardCount,
+    );
+    const rainbow = placed.some((c) => isRainbow(c, facility));
+    const rolls = rainbow ? 2 : 1;
+
+    const map = this.dataset.constants.facilityTokens[facility];
+    const w = this.dataset.constants.tokenRollWeights;
+    const expected = { ...ZERO_TOKENS };
+    for (const t of TOKENS) {
+      const p = t === map.primary ? w.primary
+        : t === map.secondary ? w.secondary
+        : w.other / (TOKENS.length - 2);
+      expected[t] = amount * p * rolls;
+    }
+    return { amount, expected, rainbow };
+  }
+
   isTerminal(state: GcRunState): boolean {
     return state.turn > this.dataset.constants.careerTurns;
   }
@@ -889,7 +1019,9 @@ export class GrandConcertScenario
    */
   private levelUpFacility(s: GrandConcertState, facility: Stat): void {
     s.facilityUses[facility] += 1;
-    const level = Math.min(5, 1 + Math.floor(s.facilityUses[facility] / 4));
+    const level = Math.min(
+      MAX_FACILITY_LEVEL, 1 + Math.floor(s.facilityUses[facility] / USES_PER_LEVEL),
+    );
     if (level > s.facilityLevels[facility]) s.facilityLevels[facility] = level;
     addAssumption(s, "facility level-up thresholds are approximated (one level per 4 uses), not decoded");
   }
@@ -1091,7 +1223,9 @@ export class GrandConcertScenario
   private growBonds(s: GrandConcertState, facility: Stat): void {
     for (const idx of s.placement[facility]) {
       const card = s.cards[idx]!;
-      card.bond = Math.min(100, card.bond + (card.stat === facility ? 7 : 5));
+      card.bond = Math.min(
+        MAX_BOND, card.bond + (card.stat === facility ? BOND_GAIN_OWN : BOND_GAIN_OTHER),
+      );
     }
     addAssumption(s, "bond gain per training is approximate, not decoded");
   }

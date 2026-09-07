@@ -30,6 +30,12 @@ import { turnCandidates, actionKey } from "../src/planner/beam";
 import {
   eligibleTechniques, songUnlocked, drawBoard, classify,
 } from "../src/scenarios/grand-concert/lesson-board";
+import {
+  trainingValue, priceEnergy, valuePolicy, trainingProfile,
+} from "../src/planner/valuation";
+import {
+  valueSong, songPlan, valueAtArrival, waitAfterTraining, expectedIncome,
+} from "../src/planner/songs";
 import { syntheticDataset, SYNTHETIC_CARDS } from "./fixtures/synthetic-scenario";
 
 let failures = 0;
@@ -961,6 +967,125 @@ function playPolicy(
 // ---------------------------------------------------------------------------
 // Repeat the headline comparison on the real dataset, when it is there
 // ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// Valuation: what a training and a song are worth
+// ---------------------------------------------------------------------------
+{
+  const sc = new GrandConcertScenario(syntheticDataset(), {
+    cards: SYNTHETIC_CARDS.map((c) => ({ ...c })),
+    startingStats: { speed: 100, stamina: 100, power: 100, guts: 100, wit: 100 },
+  });
+  const st = sc.initialState();
+  const tgt = compileTarget(EMPTY_TARGET);
+
+  // previewTraining must be a pure read. The whole valuation layer differences
+  // it against itself, so a preview that mutated would corrupt every number
+  // downstream and do it silently.
+  const snapshot = JSON.stringify(st);
+  sc.previewTraining(st, "speed");
+  sc.previewTraining(st, "wit", { facilityLevel: 5 });
+  check("previewTraining does not mutate the state it was given",
+    JSON.stringify(st) === snapshot);
+
+  const lvl1 = sc.previewTraining(st, "speed", { facilityLevel: 1 });
+  const lvl5 = sc.previewTraining(st, "speed", { facilityLevel: 5 });
+  const sum = (g: Record<Stat, number>) => STATS.reduce((a, f) => a + g[f], 0);
+  check("a higher facility level previews a bigger training",
+    sum(lvl5.gains) > sum(lvl1.gains),
+    `level 1 ${sum(lvl1.gains)} vs level 5 ${sum(lvl5.gains)}`);
+
+  // The level and bond terms are the compounding half of a training and the
+  // reason a myopic score trades a career away. They must be positive while
+  // there is a level to gain and a card short of rainbow.
+  const tv = trainingValue(sc, st, "speed", tgt);
+  check("a training is worth more than the points it shows",
+    tv.total > tv.immediate,
+    `immediate ${tv.immediate.toExponential(2)}, +level ${tv.level.toExponential(2)}, ` +
+    `+bond ${tv.bond.toExponential(2)}`);
+  check("Wit's energy cost is a credit, not a charge",
+    trainingValue(sc, st, "wit", tgt).energyCost < 0 &&
+    trainingValue(sc, st, "speed", tgt).energyCost > 0);
+
+  // Energy is priced off the run's own numbers: a turn's training divided by
+  // what a Rest buys back. No constant, so this must move with the values.
+  const cheap = priceEnergy([{ immediate: 0, level: 0, bond: 0, energyCost: 0, total: 0.1 }]);
+  const dear = priceEnergy([{ immediate: 0, level: 0, bond: 0, energyCost: 0, total: 0.2 }]);
+  check("energy costs more when a turn is worth more", dear > cheap && cheap > 0);
+
+  check("valuePolicy leaves rest and recreation to the policy it wraps", (() => {
+    const tired: GcRunState = { ...st, energy: 5 };
+    const wrapped = valuePolicy(competentPolicy, tgt)(tired, { scenario: sc });
+    const bare = competentPolicy(tired, { scenario: sc });
+    return wrapped.kind === bare.kind;
+  })());
+
+  check("valuePolicy only ever proposes a legal action", (() => {
+    const p = valuePolicy(competentPolicy, tgt);
+    const legal = new Set(sc.legalTurnActions(st).map(actionKey));
+    let cur = st;
+    for (let i = 0; i < 20 && !sc.isTerminal(cur); i++) {
+      const a = p(cur, { scenario: sc });
+      if (!legal.has(actionKey(a))) return false;
+      cur = sc.step(cur, a, mulberry32(i + 1));
+    }
+    return true;
+  })());
+
+  // A song's value is a difference of the real training formula, so a song
+  // that raises a stat this run is still gaining must be worth something, and
+  // it must be worth MORE earlier than later. That ordering is the entire
+  // reason the planner cares about songs at all.
+  const song = syntheticDataset().songs[0];
+  if (song) {
+    const v = valueSong(sc, st, song.id, tgt);
+    check("a song on the board can be valued", v !== null && v.value >= 0,
+      v ? `${v.name}: ${v.value.toExponential(2)}` : "null");
+    if (v && v.compoundingValue > 0) {
+      check("a compounding song is worth more the earlier it arrives",
+        valueAtArrival(v, 5, 60) > valueAtArrival(v, 40, 60),
+        `${valueAtArrival(v, 5, 60).toExponential(2)} at turn 5 vs ` +
+        `${valueAtArrival(v, 40, 60).toExponential(2)} at turn 40`);
+    }
+    if (v) {
+      check("a song that cannot arrive before the career ends is worth nothing",
+        valueAtArrival(v, 90, 60) === 0);
+      // The wait is a critical path over currencies that accrue in parallel,
+      // so paying down a currency that is not the bottleneck must not move it.
+      const income = expectedIncome(sc, st);
+      const w = waitAfterTraining(sc, st, "speed", v.deficit, income);
+      check("the wait for a song is a number of turns, not a sum of tokens",
+        w >= 1, `${w.toFixed(1)} turns`);
+    }
+  }
+
+  check("a run with no history assumes it trains every turn", (() => {
+    const prof = trainingProfile(sc, st);
+    const even = STATS.every((f) => Math.abs(prof.share[f] - 0.2) < 1e-9);
+    return even && prof.remainingTrainings > 0;
+  })());
+
+  // The board is homogeneous, so a technique board has no song to aim at and
+  // the plan must say so rather than reaching into the catalogue for one.
+  check("songPlan only ever names a song that is on the board", (() => {
+    let cur = st;
+    for (let i = 0; i < 25 && !sc.isTerminal(cur); i++) {
+      const p = songPlan(sc, cur, tgt);
+      for (const v of p.board) if (!cur.scenario.offers.includes(v.id)) return false;
+      if (p.aim && !cur.scenario.offers.includes(p.aim.id)) return false;
+      cur = sc.step(cur, competentPolicy(cur, { scenario: sc }), mulberry32(i + 7));
+      cur = greedyShop(sc, cur, 2, mulberry32(i + 99));
+    }
+    return true;
+  })());
+
+  check("tokenYield's expectation matches its own payout amount", (() => {
+    const y = sc.tokenYield(st, "speed");
+    const total = TOKENS.reduce((a, t) => a + y.expected[t], 0);
+    return Math.abs(total - y.amount * (y.rainbow ? 2 : 1)) < 1e-9;
+  })());
+}
 
 const GEN = join(import.meta.dirname, "../../data/generated");
 const realFile = (() => {

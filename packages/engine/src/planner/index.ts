@@ -37,6 +37,7 @@ import {
   beamSearch, actionKey, shopPlan,
   DEFAULT_BEAM, type BeamOptions, type PlannedAction,
 } from "./beam";
+import { songPlan, type SongPlan } from "./songs";
 
 export interface PlanOptions extends Partial<Omit<BeamOptions, "rollout">> {
   /**
@@ -73,6 +74,17 @@ export interface PlanResult {
   recommendations: Array<Recommendation<TurnAction>>;
   /** The shop schedule along the best line found. */
   plan: PlanStep[];
+  /**
+   * The board's songs, priced, with how far away each is.
+   *
+   * Separate from `plan` because it is a different kind of claim. `plan` is
+   * what the search decided; this is what the shop currently offers and what it
+   * would be worth, which is the question a player is actually looking at when
+   * the lesson screen is open. When the board is showing techniques there is no
+   * song to aim at and `aim` is null -- see `songs.ts` for why that is the
+   * honest answer and not a gap.
+   */
+  songs: SongPlan;
   prices: ShadowPrices;
   /**
    * Value of this state with no search: the rollout policy simply playing on.
@@ -266,6 +278,7 @@ export function plan(
   return {
     recommendations,
     plan: steps,
+    songs: songPlan(scenario, state, compiled),
     prices,
     topIsClear,
     baseline,
