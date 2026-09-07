@@ -13,6 +13,15 @@ packages/data/generated/*.json
 
 # Local scratch: one-off diagnostics, probes, and delivered patches.
 # They are how this project works, and none of them belong in history.
+#
+#   tools/diagnose/   TypeScript, run against the engine:  npx tsx tools/diagnose/<name>.ts
+#   tools/probe/      Python, read master.mdb read-only:   python tools/probe/<name>.py
+#
+# Both directories are ignored wholesale, so neither exists in a fresh clone --
+# create them as needed. The name globs stay as a backstop for anything that
+# lands in the repo root by habit.
+tools/diagnose/
+tools/probe/
 diagnose-*.ts
 probe-*.py
 *.patch
