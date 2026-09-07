@@ -489,38 +489,31 @@ check("an interpolated level sits between the two known ones",
 }
 
 // ---------------------------------------------------------------------------
-// The shop treadmill, pinned on the real dataset
+// The shop, on real data
 // ---------------------------------------------------------------------------
 
 /*
- * planner.ts pins this on a fixture. It has to be pinned here too, because the
- * bug was a property of the REAL cost structure and no fixture found it: songs
- * need two currencies at once (the cheapest is Passion 21 + Visual 21) while
- * techniques are cheap and often single-currency (the cheapest is Dance 8 and
- * nothing else), so techniques skim each currency away before a song can ever
- * be reached. Measured before the fix: a song was affordable on 0 of 72 turns,
- * on every seed tried.
+ * This section used to compare the shipped shop rule against the pre-2026-09-06
+ * one, to pin a treadmill bug: cheap single-currency techniques draining every
+ * currency before a two-currency song could be afforded. Both halves of that
+ * comparison are now meaningless, and it is worth saying why rather than
+ * quietly deleting them.
+ *
+ * The treadmill was a property of the CATALOGUE shop, where everything
+ * affordable was purchasable at once. It cannot happen on a three-offer board.
+ * And the elaborate rule that fixed it is gone too, because with a board that
+ * is entirely songs or entirely techniques, it and the naive rule produce
+ * byte-identical careers -- the situations it arbitrated never arise.
+ *
+ * What is worth pinning on real data is what the shop actually does now.
  */
 {
   const scenario = makeScenario();
 
-  type Shop = (s: GcRunState, n: number, rng: ReturnType<typeof mulberry32>) => GcRunState;
-
-  const legacyShop: Shop = (state, n, rng) => {
-    let x = state;
-    for (let i = 0; i < n; i++) {
-      const a = scenario.legalShopActions(x);
-      const pick = a.find((y) => y.kind === "song") ?? a.find((y) => y.kind === "technique");
-      if (!pick) break;
-      x = scenario.buy(x, pick, rng);
-    }
-    return x;
-  };
-
-  const play = (seed: number, shop: Shop) => {
+  const play = (seed: number) => {
     let state = scenario.initialState();
     const rng = mulberry32(seed);
-    let affordable = 0;
+    let songBoards = 0, techBoards = 0, mixed = 0, idle = 0;
     while (!scenario.isTerminal(state)) {
       let pick: Stat = "speed";
       let worst = Infinity;
@@ -531,41 +524,33 @@ check("an interpolated level sits between the two known ones",
       state = state.energy < 30
         ? scenario.step(state, { kind: "rest" }, rng)
         : scenario.step(state, { kind: "train", facility: pick }, rng);
-      if (scenario.legalShopActions(state).some((a) => a.kind === "song")) affordable++;
-      state = shop(state, 4, rng);
+
+      const songs = state.scenario.offers
+        .filter((id) => dataset.songs.some((x) => x.id === id)).length;
+      if (songs === 0) techBoards++;
+      else if (songs === state.scenario.offers.length) songBoards++;
+      else mixed++;
+
+      const before = state.scenario.techniquesTotal + state.scenario.songsOwned.length;
+      state = greedyShop(scenario, state, 4, rng);
+      if (state.scenario.techniquesTotal + state.scenario.songsOwned.length === before) idle++;
     }
-    return { state, affordable };
+    return { state, songBoards, techBoards, mixed, idle };
   };
 
-  const legacy = play(20260905, legacyShop);
-  const shipped = play(20260905, (st, n, rng) => greedyShop(scenario, st, n, rng));
+  const r = play(20260905);
+  const bought = r.state.scenario.techniquesTotal + r.state.scenario.songsOwned.length;
 
-  check("a song is rarely affordable the moment it is offered",
-    legacy.state.scenario.songsOwned.length === 0,
-    `${legacy.state.scenario.songsOwned.length} songs, ` +
-    `${legacy.state.scenario.techniquesTotal} techniques, ` +
-    `a song affordable on ${legacy.affordable} of 72 turns`);
-
-  // Reported, not asserted on a count. How many songs a career lands is now a
-  // property of a three-offer board drawn from ~250 eligible squares, and
-  // pinning a number would pin the draw rather than the rule. What IS asserted
-  // is the pathology: a shopper that buys nothing at all.
-  console.log(`  ..  shipped rule: ${shipped.state.scenario.songsOwned.length} songs, ` +
-    `${shipped.state.scenario.techniquesTotal} techniques, SP ${shipped.state.skillPoints} ` +
-    `(legacy rule: ${legacy.state.scenario.songsOwned.length} songs, ` +
-    `${legacy.state.scenario.techniquesTotal} techniques, SP ${legacy.state.skillPoints})`);
-  check("the shipped shop rule keeps the board moving",
-    shipped.state.scenario.techniquesTotal + shipped.state.scenario.songsOwned.length > 0,
-    `${shipped.state.scenario.techniquesTotal + shipped.state.scenario.songsOwned.length} lessons bought`);
-
-  check("it still buys techniques -- reserving without a per-currency surplus buys none",
-    shipped.state.scenario.techniquesTotal > 0,
-    `${shipped.state.scenario.techniquesTotal} techniques`);
-
-  const gain = STATS.reduce((a, x) => a + shipped.state.stats[x], 0)
-    - STATS.reduce((a, x) => a + legacy.state.stats[x], 0);
-  console.log(`  ..  songs are worth ${gain > 0 ? "+" : ""}${gain} total stat points over this career, ` +
-    `for ${shipped.state.skillPoints - legacy.state.skillPoints} skill points`);
+  // The best-evidenced fact about the board, asserted against the real
+  // catalogue rather than the fixture: 60 captured boards, none mixed.
+  check("no board mixes songs and techniques", r.mixed === 0,
+    `${r.techBoards} technique boards, ${r.songBoards} song boards, ${r.mixed} mixed`);
+  check("the shop buys both kinds over a career",
+    r.state.scenario.songsOwned.length > 0 && r.state.scenario.techniquesTotal > 0,
+    `${r.state.scenario.songsOwned.length} songs, ${r.state.scenario.techniquesTotal} techniques, ` +
+    `SP ${r.state.skillPoints}`);
+  console.log(`  ..  ${bought} lessons bought over 72 turns; ` +
+    `${r.idle} turns bought nothing (board unaffordable, and buying is the only redraw)`);
 }
 
 // ---------------------------------------------------------------------------
