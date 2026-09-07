@@ -151,6 +151,44 @@ export type GcRunState = RunState<GrandConcertState>;
  * effect is to raise a resource that is already at its ceiling does nothing at
  * all, and a search that cannot see that will branch on it.
  */
+/**
+ * Summer camp: four turns in which every facility trains at level 5.
+ *
+ * Decoded, then confirmed against a captured career. `single_mode_training`
+ * carries commands 601-605 with `command_level` 5 and a `base_command_id`
+ * naming the facility -- and each one's `failure_rate` is IDENTICAL to that
+ * facility's own level-5 row (601/536 = speed lv5, 602/523 = stamina lv5,
+ * 603/532 = power lv5, 604/548 = guts lv5, 605/324 = wit lv5). They are the
+ * level-5 trainings with their own presentation: different background, outfit
+ * and animation, and their own names in text_data category 138 at indices
+ * 29-33 (Running, Long-Distance Swimming, Resistance Training, ..., Push-Button
+ * Quiz) against 1-25 for the ordinary five-by-five grid.
+ *
+ * So the VALUES were already extracted and correct. What was missing is that
+ * the game hands you level 5 on these turns whatever your facility is actually
+ * at. A career capture (2026-09-05) shows every facility reading Lvl 5 across
+ * Classic and Senior Jul-Aug, and ordinary levels everywhere else including
+ * Junior Jul-Aug.
+ *
+ * The turns are not a guess either: concerts sit at 24/36/48/60/72, the capture
+ * puts "concert begins after this turn" on Junior Late Dec and Classic Late
+ * Jun, which fixes turn 1 at Junior Early Jan and two turns per month. Camp is
+ * then exactly the four turns following the 2nd and 4th concerts.
+ *
+ * What is NOT decoded is whether a camp training advances the facility's own
+ * use counter. Observation says it does not: Speed went 3 -> 4 after exactly
+ * the four non-camp uses at frames 38, 47, 51 and 53, with two camp Speed
+ * trainings sitting in between that plainly did not count. Flagged in the
+ * assumptions rather than asserted.
+ */
+export const CAMP_TURNS: ReadonlySet<number> = new Set([37, 38, 39, 40, 61, 62, 63, 64]);
+export const CAMP_LEVEL = 5;
+
+/** Is this turn a summer-camp turn, where every facility trains at level 5? */
+export function isCampTurn(turn: number): boolean {
+  return CAMP_TURNS.has(turn);
+}
+
 export const ENERGY_MIN = 0;
 export const ENERGY_MAX = 100;
 export const MOOD_MIN = -2;
@@ -480,9 +518,21 @@ export class GrandConcertScenario
         for (const u of concert.unparsed) {
           addAssumption(s, `unrecognised Concert Bonus clause, contributing nothing: ${u}`);
         }
+        // Summer camp trains every facility at level 5 regardless of its own
+        // level. This is the only place the distinction exists: the state's
+        // facilityLevels are untouched, so the camp is a window, not a gain.
+        const camp = isCampTurn(next.turn);
+        const trainingLevel = camp ? CAMP_LEVEL : s.facilityLevels[action.facility];
+        if (camp) {
+          addAssumption(s,
+            "summer camp (turns 37-40 and 61-64) trains every facility at level 5. " +
+            "The level-5 values are decoded (commands 601-605, whose failure rates " +
+            "match each facility's own level-5 row); the turn window is read off a " +
+            "captured career, not master.mdb");
+        }
         const result = computeTraining({
           facility: action.facility,
-          facilityLevel: s.facilityLevels[action.facility],
+          facilityLevel: trainingLevel,
           songBonuses: songs.stats,
           songSkillPointBonus: songs.skillPoints,
           concertFriendshipBonus: concert.friendshipTrainingEffectiveness,
@@ -494,7 +544,7 @@ export class GrandConcertScenario
           currentStats: next.stats,
         });
 
-        const failChance = this.failureChance(s, action.facility, next.energy);
+        const failChance = this.failureChance(s, action.facility, next.energy, trainingLevel);
         const failed = chance(rng, failChance);
         addAssumption(s,
           "failure rate uses the real per-facility base from master.mdb, but the " +
@@ -511,7 +561,9 @@ export class GrandConcertScenario
           for (const a of result.assumptions) addAssumption(s, a);
           this.grantTokens(s, action.facility, placed.length, rng);
           this.growBonds(s, action.facility);
-          this.levelUpFacility(s, action.facility);
+          // A camp training does not count toward the facility's own level-up.
+          // See CAMP_TURNS for the observation that says so.
+          if (!camp) this.levelUpFacility(s, action.facility);
         }
         break;
       }
@@ -770,8 +822,16 @@ export class GrandConcertScenario
    * training screen displays the true "Failure N%", so logged captures pin it
    * exactly. Until then this is flagged in every projection.
    */
-  private failureChance(s: GrandConcertState, facility: Stat, energy: number): number {
-    const level = String(s.facilityLevels[facility]);
+  private failureChance(
+    s: GrandConcertState,
+    facility: Stat,
+    energy: number,
+    atLevel?: number,
+  ): number {
+    // `atLevel` overrides the facility's own level, which is what summer camp
+    // does. Passing the level in rather than reading it here keeps the camp
+    // rule in one place.
+    const level = String(atLevel ?? s.facilityLevels[facility]);
     const base = this.failureRateBase[facility]?.[level];
     if (base === undefined) return 0;
 

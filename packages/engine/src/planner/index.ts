@@ -23,7 +23,7 @@
 
 import { STATS, TOKENS, type Stat } from "../../../data/src/types";
 import type { TurnAction, ShopAction, Recommendation, ValueBreakdown, PlanStep } from "../scenario";
-import { ENERGY_MAX, type GrandConcertScenario, type GcRunState } from "../scenarios/grand-concert";
+import { ENERGY_MAX, isCampTurn, type GrandConcertScenario, type GcRunState } from "../scenarios/grand-concert";
 import { mulberry32 } from "../rng";
 import { competentPolicy } from "../policy";
 import type { RunTarget } from "../target";
@@ -254,6 +254,12 @@ export function plan(
     ...(state.energy >= ENERGY_MAX
       ? ["energy is at its ceiling, so rest is not offered this turn: it would " +
          "clamp to no gain at all"]
+      : []),
+    ...(isCampTurn(state.turn)
+      ? ["this is a summer-camp turn: every facility trains at level 5 " +
+         "regardless of its own level, and the training does not count toward " +
+         "that facility's next level-up. The level-5 values are decoded; the " +
+         "turn window is read off a captured career, not master.mdb"]
       : []),
   ];
 

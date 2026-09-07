@@ -17,7 +17,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
 import { mulberry32 } from "../src/rng";
-import { GrandConcertScenario, type GcRunState } from "../src/scenarios/grand-concert";
+import { GrandConcertScenario, isCampTurn, type GcRunState } from "../src/scenarios/grand-concert";
 import { competentPolicy, focusedPolicy, type Policy } from "../src/policy";
 import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
@@ -611,6 +611,49 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   check("no recommendation is an action that cannot change anything",
     rFull.recommendations.every((r) =>
       r.action.kind !== "infirmary" && !(r.action.kind === "rest" && full.energy >= 100)));
+}
+
+// ---------------------------------------------------------------------------
+// Summer camp
+//
+// Camp is a window, not a gain: the facility trains at level 5 without its own
+// level moving, and without the training counting toward the next level-up.
+// Each check is paired with its non-camp control, because "camp works" and
+// "every turn works like camp" look identical from one assertion.
+// ---------------------------------------------------------------------------
+
+{
+  check("camp is the four turns after the 2nd and 4th concerts",
+    [37, 38, 39, 40, 61, 62, 63, 64].every(isCampTurn) &&
+    ![36, 41, 60, 65, 13, 14, 15, 16].some(isCampTurn),
+    "and Junior Jul-Aug (13-16) is NOT camp");
+
+  const scenario = makeScenario();
+  const train = (turn: number, facility: Stat) => {
+    const st = { ...scenario.initialState(), turn };
+    return scenario.step(st, { kind: "train", facility }, mulberry32(4));
+  };
+
+  // A level-1 facility trained inside camp must gain more than outside it.
+  const outside = train(36, "speed");
+  const inside = train(37, "speed");
+  check("a level-1 facility gains more inside camp than outside",
+    inside.stats.speed > outside.stats.speed,
+    `${outside.stats.speed} outside, ${inside.stats.speed} inside`);
+
+  check("camp does not raise the facility's own level",
+    inside.scenario.facilityLevels.speed === 1 &&
+    inside.scenario.facilityUses.speed === 0,
+    "the level-5 training is a window, not a gain");
+
+  check("an ordinary turn still advances the use counter",
+    outside.scenario.facilityUses.speed === 1);
+
+  check("plan() says camp is in effect rather than quietly applying it", (() => {
+    const st = { ...scenario.initialState(), turn: 37 };
+    return plan(scenario, st, TARGET, { ...FAST, seed: 5 })
+      .assumptions.some((a) => a.includes("summer camp"));
+  })());
 }
 
 // ---------------------------------------------------------------------------
