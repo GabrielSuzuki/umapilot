@@ -17,7 +17,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { STATS, TOKENS, type GrandConcertDataset, type Stat } from "../../data/src/types";
 import { mulberry32 } from "../src/rng";
-import { GrandConcertScenario, isCampTurn, type GcRunState } from "../src/scenarios/grand-concert";
+import { GrandConcertScenario, isCampTurn, ENERGY_MAX, REST_ENERGY_MEAN, type GcRunState } from "../src/scenarios/grand-concert";
 import { competentPolicy, focusedPolicy, type Policy } from "../src/policy";
 import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
@@ -32,6 +32,7 @@ import {
 } from "../src/scenarios/grand-concert/lesson-board";
 import {
   trainingValue, priceEnergy, valuePolicy, trainingProfile,
+  type TrainingValue,
 } from "../src/planner/valuation";
 import {
   valueSong, songPlan, valueAtArrival, waitAfterTraining, expectedIncome,
@@ -1014,6 +1015,35 @@ function playPolicy(
   const cheap = priceEnergy([{ immediate: 0, level: 0, bond: 0, energyCost: 0, total: 0.1 }]);
   const dear = priceEnergy([{ immediate: 0, level: 0, bond: 0, energyCost: 0, total: 0.2 }]);
   check("energy costs more when a turn is worth more", dear > cheap && cheap > 0);
+
+  // THE BUG THIS PINS. priceEnergy used to return the same number whether the
+  // run had 90 energy or 9. A point at full is nearly free; the same point at 9
+  // is most of a Rest, and a Rest costs a whole turn. Flat pricing let
+  // valuePolicy run the character at mean energy 22-29 and it lost to
+  // competentPolicy everywhere; with the scarcity multiplier it wins in all six
+  // starting-state x target cells by +161..+395 (see turn-priority.md).
+  const tv1: TrainingValue[] = [{ immediate: 0, level: 0, bond: 0, energyCost: 0, total: 0.1 }];
+  check("a point of energy costs more when there is less of it", (() => {
+    const full = priceEnergy(tv1, ENERGY_MAX);
+    const empty = priceEnergy(tv1, 0);
+    const mid = priceEnergy(tv1, ENERGY_MAX / 2);
+    return empty > mid && mid > full && full > 0;
+  })(), `full ${priceEnergy(tv1, ENERGY_MAX).toExponential(2)}, ` +
+        `half ${priceEnergy(tv1, ENERGY_MAX / 2).toExponential(2)}, ` +
+        `empty ${priceEnergy(tv1, 0).toExponential(2)}`);
+
+  // At full energy nothing is forgone, so the correction must leave the old
+  // price exactly alone there -- that is what makes it a correction and not a
+  // retune of every number this file already measured.
+  check("at full energy the price is unchanged from the flat one",
+    priceEnergy(tv1, ENERGY_MAX) === priceEnergy(tv1));
+
+  // And it must be the scenario's own constants doing the work, not a magic
+  // number: refilling from empty takes ENERGY_MAX / REST_ENERGY_MEAN rests.
+  check("the multiplier is the rests it would take to refill", (() => {
+    const expected = 1 + ENERGY_MAX / REST_ENERGY_MEAN;
+    return Math.abs(priceEnergy(tv1, 0) / priceEnergy(tv1) - expected) < 1e-9;
+  })(), `${(1 + ENERGY_MAX / REST_ENERGY_MEAN).toFixed(2)}x at empty`);
 
   check("valuePolicy leaves rest and recreation to the policy it wraps", (() => {
     const tired: GcRunState = { ...st, energy: 5 };

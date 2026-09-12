@@ -27,7 +27,7 @@
 
 import { STATS, type Stat, type StatVector } from "../../../data/src/types";
 import {
-  USES_PER_LEVEL, MAX_FACILITY_LEVEL, BOND_GAIN_OWN, REST_ENERGY_MEAN,
+  USES_PER_LEVEL, MAX_FACILITY_LEVEL, BOND_GAIN_OWN, REST_ENERGY_MEAN, ENERGY_MAX,
   type GrandConcertScenario, type GcRunState,
 } from "../scenarios/grand-concert";
 import { RAINBOW_BOND } from "../scenarios/grand-concert/training";
@@ -230,10 +230,21 @@ export function trainingValue(
  * small -- it REFUNDS energy, so its energy term is a credit rather than a
  * charge, and at low energy that credit is the largest term on the board.
  */
-export function priceEnergy(values: TrainingValue[]): number {
+export function priceEnergy(values: TrainingValue[], energy?: number): number {
   if (values.length === 0) return 0;
   const mean = values.reduce((a, v) => a + v.total, 0) / values.length;
-  return mean / REST_ENERGY_MEAN;
+  const base = mean / REST_ENERGY_MEAN;
+  if (energy === undefined) return base;
+  // SCARCITY. The line above prices a point of energy the same whether the run
+  // has 90 or 9, and that is the single largest thing this file got wrong. A
+  // point of energy at full is nearly free -- nothing is forgone by spending it.
+  // The same point at 9 is most of a Rest, and a Rest costs a whole turn.
+  //
+  // The multiplier is the number of Rests it would take to refill from here, so
+  // it reads directly as "how much turn am I holding". No constant is
+  // introduced: both terms are the scenario's own, and the price at full energy
+  // is unchanged, which is what keeps this a correction rather than a retune.
+  return base * (1 + (ENERGY_MAX - energy) / REST_ENERGY_MEAN);
 }
 
 
@@ -286,7 +297,7 @@ export function valuePolicy(base: Policy, target: CompiledTarget): Policy {
     if (candidates.length === 0) return action;
 
     const values = candidates.map((f) => trainingValue(scenario, state, f, target));
-    const energyPrice = priceEnergy(values);
+    const energyPrice = priceEnergy(values, state.energy);
 
     let best = action.facility;
     let bestScore = -Infinity;
