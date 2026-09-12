@@ -9,16 +9,20 @@
   ],
   "scripts": {
     "extract": "python3 tools/extract/extract.py --out packages/data/generated",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/web/tsconfig.json",
     "test": "tsx packages/engine/test/smoke.ts && tsx packages/engine/test/simulator.ts && tsx packages/engine/test/calibration.ts && tsx packages/engine/test/planner.ts",
     "golden": "tsx packages/engine/test/simulator.ts --update-golden",
     "sim": "tsx packages/engine/src/cli.ts",
     "calibrate": "tsx packages/engine/src/calibration/cli.ts",
-    "plan": "tsx packages/engine/src/planner/cli.ts"
+    "plan": "tsx packages/engine/src/planner/cli.ts",
+    "web": "vite --config packages/web/vite.config.ts",
+    "web:build": "vite build --config packages/web/vite.config.ts"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.0",
+    "playwright": "^1.63.0",
     "tsx": "^4.23.13",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.3.0"
   }
 }

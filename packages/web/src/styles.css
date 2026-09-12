@@ -1,0 +1,74 @@
+:root {
+  color-scheme: light dark;
+  --bg: #faf9f7;
+  --panel: #ffffff;
+  --ink: #1b1a18;
+  --muted: #6b6862;
+  --line: #e3e0da;
+  --accent: #6c4bb6;
+  --good: #2f7a4f;
+  --warn: #a8620a;
+  --bad: #a33a2e;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16151a; --panel: #1e1d23; --ink: #eceaf2; --muted: #9d99a8;
+    --line: #322f3a; --accent: #a992e8; --good: #6ec38d; --warn: #e0a35a; --bad: #e58a7c;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.app { max-width: 1100px; margin: 0 auto; padding: 24px 20px 64px; }
+h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+.cols { display: grid; grid-template-columns: 320px 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+
+/* state editor */
+.grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; align-items: center; }
+.grid label { color: var(--muted); font-size: 13px; }
+input[type="number"] {
+  width: 92px; padding: 5px 8px; text-align: right; font: inherit; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink);
+}
+.range { display: flex; align-items: center; gap: 8px; }
+.hr { height: 1px; background: var(--line); margin: 14px 0; }
+
+/* recommendation */
+.rec { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rec .what { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+.rec .ev { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+.tie { color: var(--warn); font-size: 13px; }
+.why { color: var(--muted); font-size: 14px; margin-top: 6px; }
+.alts { margin-top: 14px; }
+.alt { display: grid; grid-template-columns: 1fr 92px 88px; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; align-items: baseline; }
+.alt .n { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); font-size: 13px; }
+
+/* outlook */
+.out { display: grid; grid-template-columns: 64px 1fr 150px; gap: 8px; align-items: center; padding: 5px 0; font-size: 14px; }
+.bar { height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.out .n { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; }
+.tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.tag.ok { color: var(--good); } .tag.close { color: var(--warn); } .tag.no { color: var(--bad); }
+
+.banner { border-left: 3px solid var(--bad); background: color-mix(in srgb, var(--bad) 7%, transparent); padding: 11px 13px; border-radius: 6px; margin-bottom: 14px; font-size: 14px; }
+.note { color: var(--muted); font-size: 12.5px; }
+.songs .s { padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.songs .s:first-child { border-top: 0; }
+.songs .meta { color: var(--muted); font-size: 12.5px; }
+details { margin-top: 14px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.err { border-left: 3px solid var(--bad); padding: 12px 14px; background: var(--panel); border-radius: 6px; }
+.loading { color: var(--muted); }
+.busy { opacity: 0.55; }
+
+.goal { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.goal .k { color: var(--muted); font-size: 13px; }
+.goal strong { font-size: 19px; font-variant-numeric: tabular-nums; }

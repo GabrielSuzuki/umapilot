@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "vite/client"
+    ],
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "vite.config.ts"
+  ],
+  "exclude": []
+}

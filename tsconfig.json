@@ -17,5 +17,8 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts"
+  ],
+  "exclude": [
+    "packages/web"
   ]
 }
