@@ -136,6 +136,80 @@ still short.
 
 ---
 
+## What a target means, and what a point in it costs
+
+The scalar caps each stat at its target. What it does *below* the target is a
+separate choice, and until 0022 it was one nobody had priced.
+
+`shortfallScore` scored a stat as `min(1, have/goal)` and averaged over the
+targeted stats, so the value of one raw point was **`1/goal`**. Every target
+was worth the same share of the score, which sounds neutral and is not: it
+means **the size of a target sets the price of a point in it.** Under a speed
+700 / guts 200 target a guts point was worth **3.5x** a speed point, while the
+simulator's own yields said a speed training pays **1.8x** a guts training. The
+objective outbid its own yield model, and the search dutifully followed it onto
+facilities the player's deck can never rainbow.
+
+`TargetNorm` is the replacement and the default:
+
+| | score | value of one point below target |
+|---|---|---|
+| `fraction` | mean of `min(1, have/goal)` | `1/goal` — each TARGET weighted equally |
+| **`points`** | `sum(min(have, goal)) / sum(goal)` | `1/sum(goal)` — each POINT weighted equally |
+
+Under `points` the price is flat across stats, so which facility wins is
+decided by what it pays. The per-stat cap is unchanged: a met target still
+drops to the overshoot weight, so the objective still refuses to pour 600
+points into a 400 target.
+
+**The trade is real.** `fraction` guarantees a small target a full share of the
+score; `points` gives it a share proportional to its size, so a small target
+*can* be left unmet. That is measured below, in both directions.
+
+### How it was measured
+
+Not by agreement with the captured career. `replay-validation.md` Part 3 showed
+that removing the off-deck pull moves agreement *below* chance for a reason
+that lives in the leaf evaluator — the player alternates speed and wit to
+conserve energy, and the rollout policy rests instead — so agreement penalises
+a correct fix here. It is reported and not gated.
+
+The yardstick is `meetsTarget`, the predicate the UI reports. Neither norm
+optimises it directly; both are surrogates for it. 48 paired seeds, full
+`plan()`-driven careers, his real deck, reachable target:
+
+| | `fraction` | `points` | paired difference |
+|---|---:|---:|---|
+| all targets met | 12.5% | **39.6%** | +0.271, t = 3.27, 95% CI [0.108, 0.433] |
+| — McNemar on the discordant pairs | 3 | **16** | exact two-sided **p = 0.0044** |
+| targets met, of 5 | 3.52 | **4.13** | +0.60, t = 3.92 |
+| final stats, race-effective | 2370 | **2491** | +121, t = 3.42 |
+
+Per target, `points` wins where it matters and pays for it in one place:
+speed **35% -> 81%**, wit **19% -> 44%**, stamina **100% -> 88%**.
+
+The estimate *grew* from +0.200 at n = 20 to +0.271 at n = 48 — the opposite of
+the shape this project has twice mistaken for a result.
+
+### Where `points` is worse
+
+On an **unreachable** target it is worse on the thing that matters. Against his
+stated 1600/650/1200/550/1000 build, neither norm meets everything, but
+`fraction` meets 0.40 of the five targets on average and `points` meets
+**0.00** (t = -3.56): `points` chases the big goals proportionally — speed 408
+-> 909, wit 397 -> 526 — and abandons the small reachable ones — stamina 586 ->
+306, guts 459 -> 279.
+
+This is the predicted failure mode, and it is confined to a state the product
+is already supposed to prevent: `statOutlook` (0019) reports an unreachable
+target before the first recommendation. The honest fix is to renormalise
+against the projected reachable frontier rather than the typed goal, which is
+the number `statOutlook` already computes. Not done.
+
+`--target-norm fraction` restores the old behaviour on the CLI.
+
+---
+
 ## What a shadow price means
 
 `shadowPrices()` returns objective-score per unit of energy, mood, each token,

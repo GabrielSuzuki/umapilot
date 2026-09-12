@@ -53,6 +53,21 @@ export interface CompiledTarget {
    * per stat per node, millions of times per plan.
    */
   raceEffective: boolean;
+  /**
+   * How a point below its target is priced. See `TargetNorm`.
+   *
+   * Read once per stat per node like `raceEffective`, so it is a compiled field
+   * rather than a lookup.
+   */
+  norm: TargetNorm;
+  /**
+   * Sum of the targeted goals, in the same units `shortfallScore` compares
+   * against them. The denominator for `norm: "points"`; unused by "fraction".
+   *
+   * Precomputed because it is a constant of the target and the inner loop runs
+   * millions of times per plan.
+   */
+  goalTotal: number;
   /** True when the target constrains nothing -- scoring falls back to stat sum. */
   empty: boolean;
 }
@@ -61,11 +76,18 @@ export function compileTarget(
   target: RunTarget,
   skillsById?: Map<number, SkillEntry>,
   statValue: StatValueMode = "race-effective",
+  norm: TargetNorm = DEFAULT_TARGET_NORM,
 ): CompiledTarget {
+  const raceEffective = statValue === "race-effective";
+
   const wanted: Array<{ stat: Stat; want: number }> = [];
+  let goalTotal = 0;
   for (const stat of STATS) {
     const want = target.stats[stat];
-    if (want != null && want > 0) wanted.push({ stat, want });
+    if (want != null && want > 0) {
+      wanted.push({ stat, want });
+      goalTotal += raceEffective ? effectiveStat(want) : want;
+    }
   }
 
   let skillSpNeeded = 0;
@@ -80,7 +102,9 @@ export function compileTarget(
     wanted,
     skillSpNeeded,
     skillWeight: target.skills.length === 0 ? 0 : target.skillWeight,
-    raceEffective: statValue === "race-effective",
+    raceEffective,
+    norm,
+    goalTotal,
     empty: wanted.length === 0 && skillSpNeeded === 0,
   };
 }
@@ -152,12 +176,69 @@ export function effectiveStat(raw: number): number {
 export type StatValueMode = "race-effective" | "raw";
 
 /**
+ * What a stat target MEANS to the objective -- the per-point price the search
+ * bids with.
+ *
+ *   "fraction"  the original. Score each stat as `min(1, have/goal)` and take
+ *               the mean, so every TARGET is worth the same share of the score
+ *               and one raw point is worth `1/goal`.
+ *
+ *   "points"    the default. Score `sum(min(have, goal)) / sum(goal)`, so every
+ *               POINT below a target is worth the same and a target is worth a
+ *               share proportional to its size.
+ *
+ * `1/goal` was not a coding error; it was a modelling choice nobody had priced,
+ * and measurement in `replay-validation.md` Part 3 is what priced it. Under a
+ * speed 700 / guts 200 target it makes a guts point worth **3.5x** a speed
+ * point, while the simulator's own measured yields say a speed training pays
+ * **1.8x** a guts training. The objective outbid its own yield model, and the
+ * visible consequence was the search naming facilities the player's deck can
+ * never rainbow on 78% of turns -- a number that collapsed to 18% the moment
+ * the cheap denominators were removed.
+ *
+ * So the defect is specific: **the size of a target set the price of a point in
+ * it.** A stat you barely care about became the cheapest place to spend a turn
+ * precisely BECAUSE you barely cared about it. Under "points" the price is flat
+ * across stats, and which facility wins is decided by what it pays -- which is
+ * the question the simulator exists to answer.
+ *
+ * THE TRADE IS REAL AND IS NOT FREE. "fraction" says *each target matters
+ * equally*; "points" says *each point matters equally*. Under "points" a small
+ * target is a small part of the score, so a 200-guts target on a 2450-point
+ * wishlist is worth 8% of it and CAN be left unmet if guts never pays well --
+ * where "fraction" would have guaranteed it a fifth of the score. That is the
+ * failure mode to watch, and it is why the shipped comparison scores both by
+ * `meetsTarget` (the predicate the UI reports) rather than by either objective's
+ * own currency. See `tools/diagnose/diagnose-norm.ts`.
+ *
+ * What survives the change is the part worth keeping: the per-stat cap. Once a
+ * stat reaches its target its marginal value drops to `OVERSHOOT_WEIGHT`, so
+ * the objective still refuses to pour 600 points into a 400 target. "points"
+ * changes which unmet stat is attractive, never whether a met one stays so.
+ */
+export type TargetNorm = "fraction" | "points";
+
+/**
+ * "points", by the user's decision on 2026-09-12, on the evidence above.
+ *
+ * Kept as a named constant rather than inlined at the default parameter so that
+ * the diagnostics can state which normalisation is the shipped one without
+ * hardcoding a guess.
+ */
+export const DEFAULT_TARGET_NORM: TargetNorm = "points";
+
+/**
  * Score a state in [0, ~1+], higher is better.
  *
- * Structure: the mean fraction of each stat target that has been met, capped at
- * 1 per stat, plus a small overshoot term, plus the skill-point term. Capping
- * per stat rather than in aggregate is the load-bearing part -- it is what makes
- * "the stat furthest from its target" the thing worth improving.
+ * Structure: progress toward the stat targets, capped per stat, plus a small
+ * overshoot term, plus the skill-point term. Capping per stat rather than in
+ * aggregate is the load-bearing part -- it is what stops the search paying for
+ * points past a target while another stat sits short.
+ *
+ * `TargetNorm` decides the unit that progress is measured in, and therefore
+ * what one raw stat point is worth: `1/goal` under "fraction", `1/sum(goal)`
+ * under "points". Read that type before changing anything here; the choice is
+ * measured, not arbitrary.
  *
  * `state` may be mid-run; nothing here assumes turn 72. That matters because
  * the beam scores partial states constantly.
@@ -173,17 +254,39 @@ export function shortfallScore(state: GcRunState, target: CompiledTarget): numbe
     return sum / 5000;
   }
 
+  // Both branches accumulate the same two quantities -- progress toward the
+  // targets, and progress past them -- and divide by the same kind of total.
+  // The ONLY difference is the unit: fractions of a target, or stat points.
+  // That single choice is what sets the objective's per-point price, and it is
+  // the whole of `TargetNorm`.
   let met = 0;
   let over = 0;
-  for (const { stat, want } of target.wanted) {
-    const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
-    const goal = target.raceEffective ? effectiveStat(want) : want;
-    met += Math.min(1, have / goal);
-    if (have > goal) over += (have - goal) / goal;
+  let denom: number;
+
+  if (target.norm === "points") {
+    for (const { stat, want } of target.wanted) {
+      const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
+      const goal = target.raceEffective ? effectiveStat(want) : want;
+      met += Math.min(have, goal);
+      if (have > goal) over += have - goal;
+    }
+    denom = target.goalTotal;
+  } else {
+    for (const { stat, want } of target.wanted) {
+      const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
+      const goal = target.raceEffective ? effectiveStat(want) : want;
+      met += Math.min(1, have / goal);
+      if (have > goal) over += (have - goal) / goal;
+    }
+    denom = target.wanted.length;
   }
-  const statScore = target.wanted.length === 0
-    ? 0
-    : (met + OVERSHOOT_WEIGHT * over) / target.wanted.length;
+
+  // Guard the divisor rather than the stat count: under "points" the
+  // denominator is a sum of goals, and a caller that compiles a skills-only
+  // target reaches here with no stats and no goal total. Dividing by either
+  // zero would return NaN and poison every comparison in the beam silently,
+  // which is exactly the class of bug this project keeps finding.
+  const statScore = denom === 0 ? 0 : (met + OVERSHOOT_WEIGHT * over) / denom;
 
   if (target.skillSpNeeded === 0) return statScore;
 

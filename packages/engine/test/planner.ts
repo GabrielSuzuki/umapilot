@@ -23,6 +23,7 @@ import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
 import {
   compileTarget, shortfallScore, meetsTarget, wilson, effectiveStat, HALVING_THRESHOLD,
+  DEFAULT_TARGET_NORM,
 } from "../src/planner/objective";
 import { rollout, greedyShop, stateValue, projectFinals, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
@@ -229,6 +230,94 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   const [lo, hi] = wilson(0, 50);
   check("a Wilson interval stays inside [0,1] at the extremes",
     lo >= 0 && hi <= 1 && hi > 0, `0/50 -> [${lo.toFixed(3)}, ${hi.toFixed(3)}]`);
+}
+
+// ---------------------------------------------------------------------------
+// TargetNorm -- what a target means, and what a point in it costs
+//
+// These pin the BUG as well as the fix. `replay-validation.md` Part 3 found
+// that `min(1, have/goal)` priced one raw stat point at `1/goal`, so the SIZE
+// of a target set the PRICE of a point in it: under a speed 700 / guts 200
+// target a guts point was worth 3.5x a speed point, while the simulator's own
+// yields said a speed training pays 1.8x a guts training. The objective outbid
+// its own yield model, and no test noticed -- every objective check above is
+// written against ONE target and so never compares two goals of different
+// sizes. A suite can be thorough about a function and still never ask the
+// question that breaks it.
+//
+// The first check therefore asserts the OLD behaviour under `norm: "fraction"`
+// explicitly. It is not there to defend `1/goal`; it is there so that anyone
+// who reintroduces it has to walk past a test that says out loud what it does.
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const base = scenario.initialState();
+  // A target whose two goals differ by 3.5x, both under the 1200 halving so
+  // that `race-effective` scoring is the identity and cannot confound the ratio.
+  const LOPSIDED: RunTarget = {
+    ...EMPTY_TARGET,
+    stats: { speed: 700, stamina: null, power: null, guts: 200, wit: null },
+  };
+  const under: GcRunState = { ...base, stats: { speed: 100, stamina: 0, power: 0, guts: 50, wit: 0 } };
+
+  /** What the objective bids for one raw point in `stat`, by finite difference. */
+  const bid = (t: ReturnType<typeof compileTarget>, stat: Stat, from: GcRunState = under) =>
+    shortfallScore({ ...from, stats: { ...from.stats, [stat]: from.stats[stat] + 1 } }, t)
+    - shortfallScore(from, t);
+
+  const frac = compileTarget(LOPSIDED, undefined, "race-effective", "fraction");
+  const pts = compileTarget(LOPSIDED, undefined, "race-effective", "points");
+
+  const ratioFrac = bid(frac, "guts") / bid(frac, "speed");
+  check('THE BUG: under "fraction" a point is worth 1/goal, so the smaller target is cheaper',
+    Math.abs(ratioFrac - 700 / 200) < 1e-9,
+    `guts (goal 200) is worth ${ratioFrac.toFixed(2)}x speed (goal 700) -- the ratio of the goals, ` +
+    `and nothing to do with what either facility pays`);
+
+  const ratioPts = bid(pts, "guts") / bid(pts, "speed");
+  check('THE FIX: under "points" every unmet target prices a point identically',
+    Math.abs(ratioPts - 1) < 1e-12,
+    `guts/speed = ${ratioPts.toFixed(6)}`);
+
+  check('under "points" that price really is 1/sum(goal)',
+    Math.abs(bid(pts, "speed") - 1 / 900) < 1e-12,
+    `bid ${bid(pts, "speed").toExponential(4)} against 1/(700+200) = ${(1 / 900).toExponential(4)}`);
+
+  // The property worth KEEPING from the old objective. "points" changes which
+  // unmet stat is attractive; it must not change the fact that a met one stops
+  // being attractive, or the search goes back to pouring points past a target.
+  const gutsMet: GcRunState = { ...under, stats: { ...under.stats, guts: 200 } };
+  check('a met target still drops to the overshoot price under "points"',
+    bid(pts, "guts", gutsMet) < bid(pts, "speed", gutsMet) && bid(pts, "guts", gutsMet) > 0,
+    `met guts bids ${bid(pts, "guts", gutsMet).toExponential(2)} against still-short speed's ` +
+    `${bid(pts, "speed", gutsMet).toExponential(2)} -- lower, but not zero, so margin is still bought`);
+
+  // The norm is a VALUATION, so it must not move the predicate the UI reports.
+  const mixed: GcRunState = { ...base, stats: { speed: 700, stamina: 0, power: 0, guts: 199, wit: 0 } };
+  const metMixed: GcRunState = { ...mixed, stats: { ...mixed.stats, guts: 200 } };
+  check("TargetNorm changes what a point is worth, never whether the target is met",
+    meetsTarget(mixed, frac) === meetsTarget(mixed, pts) &&
+    meetsTarget(metMixed, frac) === meetsTarget(metMixed, pts) &&
+    !meetsTarget(mixed, pts) && meetsTarget(metMixed, pts),
+    "guts 199 -> both false, guts 200 -> both true");
+
+  check('"points" is the shipped default',
+    compileTarget(LOPSIDED).norm === DEFAULT_TARGET_NORM && DEFAULT_TARGET_NORM === "points");
+
+  // The divisor under "points" is a SUM OF GOALS, not a stat count, so a
+  // skills-only target reaches the branch with a zero denominator. NaN in the
+  // objective would not throw -- it would make every beam comparison false and
+  // silently return whichever candidate happened to be ordered first.
+  const skillsOnly = compileTarget(
+    { ...EMPTY_TARGET,
+      stats: { speed: null, stamina: null, power: null, guts: null, wit: null },
+      skills: [{ skillId: 1, priority: "required" }], skillWeight: 1 },
+    new Map([[1, { id: 1, name: "x", spCost: 100 } as never]]),
+    "race-effective", "points",
+  );
+  const sc0 = shortfallScore(base, skillsOnly);
+  check("a stats-free target does not divide by zero", Number.isFinite(sc0), `score ${sc0}`);
 }
 
 // ---------------------------------------------------------------------------

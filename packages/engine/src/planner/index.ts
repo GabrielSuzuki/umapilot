@@ -32,6 +32,7 @@ import { statOutlook, outlookWarning, type RunTarget, type StatOutlook } from ".
 import {
   compileTarget, shortfallScore, shortfallByStat, separable,
   type CompiledTarget, type GoalEstimate, type ObjectiveMode, type StatValueMode,
+  type TargetNorm,
 } from "./objective";
 import { goalProbability, stateValue, rolloutTrace, projectFinals, type RolloutOptions, DEFAULT_ROLLOUT } from "./rollout";
 import { shadowPrices, zeroPrices, type ShadowPrices } from "./shadow";
@@ -68,6 +69,13 @@ export interface PlanOptions extends Partial<Omit<BeamOptions, "rollout">> {
    * face value. Targets are raw numbers either way -- see `StatValueMode`.
    */
   statValue?: StatValueMode;
+  /**
+   * What a stat target means to the objective -- "points" (default) prices
+   * every point below a target the same; "fraction" prices every TARGET the
+   * same, which makes a point worth `1/goal`. See `TargetNorm`; the default is
+   * a measured decision, not a style choice.
+   */
+  targetNorm?: TargetNorm;
   rollout?: Partial<RolloutOptions>;
 }
 
@@ -123,7 +131,7 @@ export function plan(
   options: PlanOptions = {},
 ): PlanResult {
   const t0 = Date.now();
-  const compiled = compileTarget(target, undefined, options.statValue);
+  const compiled = compileTarget(target, undefined, options.statValue, options.targetNorm);
 
   const policyTarget: Partial<Record<Stat, number | null>> = {};
   for (const stat of STATS) policyTarget[stat] = target.stats[stat];
@@ -444,4 +452,4 @@ function shopReason(
 }
 
 export { compileTarget, shortfallByStat, DEFAULT_BEAM, DEFAULT_ROLLOUT };
-export type { PlannedAction, ShadowPrices, GoalEstimate, CompiledTarget, ObjectiveMode };
+export type { PlannedAction, ShadowPrices, GoalEstimate, CompiledTarget, ObjectiveMode, TargetNorm };

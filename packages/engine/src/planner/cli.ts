@@ -19,7 +19,7 @@ import { GrandConcertScenario, type CardState, type GcRunState } from "../scenar
 import { EMPTY_TARGET, type RunTarget } from "../target";
 import { POLICIES } from "../policy";
 import { plan, type PlanOptions } from "./index";
-import type { ObjectiveMode } from "./objective";
+import type { ObjectiveMode, TargetNorm } from "./objective";
 
 interface Input {
   cards: CardState[];
@@ -95,6 +95,7 @@ function main(): void {
     probabilityFor: num("--prob-for", 3),
     seed: num("--seed", 1),
     objective: (arg("--objective") ?? "hybrid") as ObjectiveMode,
+    ...(arg("--target-norm") ? { targetNorm: arg("--target-norm") as TargetNorm } : {}),
     companions: input.companions ?? [],
     rollout: { policy },
   };
