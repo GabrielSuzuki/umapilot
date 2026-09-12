@@ -41,8 +41,20 @@ import type { GcRunState } from "../scenarios/grand-concert";
  * and the skill lookups out of the inner loop, which runs millions of times.
  */
 export interface CompiledTarget {
-  /** Stats with a real target, and what it is. */
-  wanted: Array<{ stat: Stat; want: number }>;
+  /**
+   * Stats with a real target.
+   *
+   * `want` is the RAW number the player typed. It is what `meetsTarget` compares
+   * against and it is never scaled -- "did I hit 650 Stamina" is a question
+   * about the number the game shows.
+   *
+   * `goal` is what SCORING compares against: `want` in the current
+   * `StatValueMode`, times the goal scale. The two are equal in the ordinary
+   * case and diverge when the target has been rescaled against what the run can
+   * actually reach. Keeping them apart is what stops a rescaling from silently
+   * moving the definition of success.
+   */
+  wanted: Array<{ stat: Stat; want: number; goal: number }>;
   /** Total SP the wishlist costs. 0 when the wishlist is empty. */
   skillSpNeeded: number;
   /** 0 = stats only, 1 = skills only. */
@@ -68,6 +80,11 @@ export interface CompiledTarget {
    * millions of times per plan.
    */
   goalTotal: number;
+  /**
+   * The scale that was applied to every goal, for reporting. 1 when the target
+   * was taken as typed.
+   */
+  goalScale: number;
   /** True when the target constrains nothing -- scoring falls back to stat sum. */
   empty: boolean;
 }
@@ -77,16 +94,21 @@ export function compileTarget(
   skillsById?: Map<number, SkillEntry>,
   statValue: StatValueMode = "race-effective",
   norm: TargetNorm = DEFAULT_TARGET_NORM,
+  goalScale = 1,
 ): CompiledTarget {
   const raceEffective = statValue === "race-effective";
+  // A scale of 0 would make every goal 0, every stat instantly "met", and the
+  // objective flat. Clamp rather than trust a caller's arithmetic.
+  const scale = Number.isFinite(goalScale) && goalScale > 0 ? Math.min(1, goalScale) : 1;
 
-  const wanted: Array<{ stat: Stat; want: number }> = [];
+  const wanted: Array<{ stat: Stat; want: number; goal: number }> = [];
   let goalTotal = 0;
   for (const stat of STATS) {
     const want = target.stats[stat];
     if (want != null && want > 0) {
-      wanted.push({ stat, want });
-      goalTotal += raceEffective ? effectiveStat(want) : want;
+      const goal = (raceEffective ? effectiveStat(want) : want) * scale;
+      wanted.push({ stat, want, goal });
+      goalTotal += goal;
     }
   }
 
@@ -105,6 +127,7 @@ export function compileTarget(
     raceEffective,
     norm,
     goalTotal,
+    goalScale: scale,
     empty: wanted.length === 0 && skillSpNeeded === 0,
   };
 }
@@ -228,6 +251,50 @@ export type TargetNorm = "fraction" | "points";
 export const DEFAULT_TARGET_NORM: TargetNorm = "points";
 
 /**
+ * What the goals are measured AGAINST.
+ *
+ *   "typed"     the numbers the player entered, unchanged.
+ *   "frontier"  the same numbers scaled by ONE scalar so that their total is
+ *               something the run can actually produce, as projected by
+ *               `projectFinals` -- the number `statOutlook` already computes.
+ *
+ * WHY THIS EXISTS. Under `norm: "points"` every unmet stat prices a point
+ * identically, so the only thing that ever makes the search switch facilities
+ * is a stat reaching its target and dropping to the overshoot weight. When NO
+ * target is reachable, nothing ever saturates, nothing ever switches, and the
+ * objective degenerates to "take the highest-yield facility every turn". That
+ * is not a rounding error in an edge case; it is the objective losing its
+ * entire steering mechanism exactly when the player has asked for too much.
+ *
+ * ONE SCALAR, NOT ONE PER STAT. Scaling each stat toward its own projection
+ * would be self-fulfilling: a stat the current policy does not train projects
+ * low, so its goal shrinks, so it saturates, so it is trained even less. A
+ * single scalar cannot do that. It also preserves the RATIOS between the
+ * player's goals, which is the part of an over-ambitious target that is still
+ * information: asking for 1600 speed and 650 stamina says speed matters about
+ * 2.5x as much, and that survives being told the whole thing is out of reach.
+ *
+ * The scale is computed ONCE per `plan()` call, at the root, and compiled in --
+ * so it is a constant of the search, not something the search can move.
+ *
+ * It never rescales UP: a reachable target is left exactly as typed, which is
+ * what makes this safe to enable by default. `meetsTarget` is untouched in
+ * either mode.
+ */
+export type TargetScale = "typed" | "frontier";
+
+/**
+ * "frontier", by the user's decision on 2026-09-12.
+ *
+ * Safe as a default because it is a NO-OP on a reachable target: 15 of 16
+ * paired seeds on the reachable target produced byte-identical careers, the
+ * sixteenth differing only because the projection dipped under the goal total
+ * mid-run. It changes behaviour exactly where the typed target was not
+ * achievable, which is where the objective had nothing sensible to do anyway.
+ */
+export const DEFAULT_TARGET_SCALE: TargetScale = "frontier";
+
+/**
  * Score a state in [0, ~1+], higher is better.
  *
  * Structure: progress toward the stat targets, capped per stat, plus a small
@@ -264,17 +331,15 @@ export function shortfallScore(state: GcRunState, target: CompiledTarget): numbe
   let denom: number;
 
   if (target.norm === "points") {
-    for (const { stat, want } of target.wanted) {
+    for (const { stat, goal } of target.wanted) {
       const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
-      const goal = target.raceEffective ? effectiveStat(want) : want;
       met += Math.min(have, goal);
       if (have > goal) over += have - goal;
     }
     denom = target.goalTotal;
   } else {
-    for (const { stat, want } of target.wanted) {
+    for (const { stat, goal } of target.wanted) {
       const have = target.raceEffective ? effectiveStat(state.stats[stat]) : state.stats[stat];
-      const goal = target.raceEffective ? effectiveStat(want) : want;
       met += Math.min(1, have / goal);
       if (have > goal) over += (have - goal) / goal;
     }

@@ -32,7 +32,7 @@ import { statOutlook, outlookWarning, type RunTarget, type StatOutlook } from ".
 import {
   compileTarget, shortfallScore, shortfallByStat, separable,
   type CompiledTarget, type GoalEstimate, type ObjectiveMode, type StatValueMode,
-  type TargetNorm,
+  type TargetNorm, type TargetScale, DEFAULT_TARGET_SCALE,
 } from "./objective";
 import { goalProbability, stateValue, rolloutTrace, projectFinals, type RolloutOptions, DEFAULT_ROLLOUT } from "./rollout";
 import { shadowPrices, zeroPrices, type ShadowPrices } from "./shadow";
@@ -76,6 +76,13 @@ export interface PlanOptions extends Partial<Omit<BeamOptions, "rollout">> {
    * a measured decision, not a style choice.
    */
   targetNorm?: TargetNorm;
+  /**
+   * What the goals are scored against -- "typed" (default) takes them as
+   * entered; "frontier" scales them all by one scalar so their total is
+   * something the run is projected to reach. "frontier" is the DEFAULT. See
+   * `TargetScale`. Never scales up, and never changes `meetsTarget`.
+   */
+  targetScale?: TargetScale;
   rollout?: Partial<RolloutOptions>;
 }
 
@@ -120,6 +127,14 @@ export interface PlanResult {
    * visible. See `statOutlook`.
    */
   outlook: StatOutlook[];
+  /**
+   * The scalar the targets were scored against, 1 when they were taken as
+   * typed. Below 1 means the objective pursued a smaller build of the same
+   * shape, and the player has to be told: a recommendation aimed at 51% of what
+   * someone asked for, presented as though it were aimed at what they asked
+   * for, is the same silent refusal `statOutlook` exists to end.
+   */
+  goalScale: number;
   assumptions: string[];
   warning?: string;
 }
@@ -131,7 +146,6 @@ export function plan(
   options: PlanOptions = {},
 ): PlanResult {
   const t0 = Date.now();
-  const compiled = compileTarget(target, undefined, options.statValue, options.targetNorm);
 
   const policyTarget: Partial<Record<Stat, number | null>> = {};
   for (const stat of STATS) policyTarget[stat] = target.stats[stat];
@@ -158,6 +172,42 @@ export function plan(
 
   const objective: ObjectiveMode = options.objective ?? "hybrid";
   const shadowSamples = options.shadowSamples ?? 12;
+
+  // THE PROJECTION COMES FIRST, because the target may be scored against it.
+  //
+  // Where the run is projected to finish, stat by stat. Rollouts read for the
+  // stat line instead of the score, so it answers the question `validateTarget`
+  // structurally cannot: not "is this target above the cap" but "does this model
+  // expect to get there". See `statOutlook`.
+  //
+  // `ro`, NOT `shadowRollout`. The shadow prices deliberately truncate at
+  // `leafTruncate` turns because they are pricing a marginal resource. A
+  // projection of where the run FINISHES is the opposite case and must play to
+  // turn 72 -- inheriting the truncation reported ~216 Speed for a career that
+  // ends near 900, which is the same value dressed as a different quantity.
+  const projection = projectFinals(
+    scenario, state, (beamOpts.seed ^ 0x1b873593) >>> 0,
+    Math.max(4, beamOpts.leafSamples), { ...ro, truncateAfter: 0 },
+  );
+  const outlook = statOutlook(target, projection.mean, projection.sd);
+  const unreachable = outlookWarning(outlook);
+
+  // One scalar, from the totals, and only ever downward. Per-stat scaling would
+  // be self-fulfilling -- a stat the rollout policy neglects projects low, so
+  // its goal shrinks, so it is neglected harder. The ratios between the player's
+  // goals are information even when their absolute level is not, and a single
+  // scalar is what preserves them. See `TargetScale`.
+  let goalScale = 1;
+  if ((options.targetScale ?? DEFAULT_TARGET_SCALE) === "frontier") {
+    let wantTotal = 0, projTotal = 0;
+    for (const stat of STATS) {
+      const want = target.stats[stat];
+      if (want != null && want > 0) { wantTotal += want; projTotal += projection.mean[stat]; }
+    }
+    if (wantTotal > 0 && projTotal > 0) goalScale = Math.min(1, projTotal / wantTotal);
+  }
+
+  const compiled = compileTarget(target, undefined, options.statValue, options.targetNorm, goalScale);
 
   // Shadow prices are finite differences on the SAME rollout value function the
   // leaves use, so the same noise corrupts them -- and an inflated price is
@@ -196,26 +246,6 @@ export function plan(
     scenario, state, compiled, (beamOpts.seed ^ 0x5f356495) >>> 0,
     beamOpts.leafSamples, shadowRollout,
   );
-
-  // Where the run is actually projected to finish, stat by stat. Same rollouts,
-  // same seeding, read for the stat line instead of the score -- so it costs a
-  // handful of rollouts and answers the question `validateTarget` structurally
-  // cannot: not "is this target above the cap" but "does this model expect to
-  // get there". The objective abandons a target it cannot meet, and until now
-  // it did so silently. See `statOutlook`.
-  //
-  // `ro`, NOT `shadowRollout`. The shadow prices deliberately truncate at
-  // `leafTruncate` turns because they are pricing a marginal resource, and a
-  // truncated rollout is the right instrument for that. A projection of where
-  // the run FINISHES is the opposite case and must play to turn 72 -- inheriting
-  // the truncation reported ~216 Speed for a career that ends near 900, which is
-  // the same value dressed as a different quantity.
-  const projection = projectFinals(
-    scenario, state, (beamOpts.seed ^ 0x1b873593) >>> 0,
-    Math.max(4, beamOpts.leafSamples), { ...ro, truncateAfter: 0 },
-  );
-  const outlook = statOutlook(target, projection.mean, projection.sd);
-  const unreachable = outlookWarning(outlook);
 
   // Goal probability for the actions a human will actually look at. Every
   // estimate uses the SAME seed base, so two actions are compared under the
@@ -305,6 +335,12 @@ export function plan(
       ? ["energy is at its ceiling, so rest is not offered this turn: it would " +
          "clamp to no gain at all"]
       : []),
+    ...(goalScale < 1
+      ? [`your target totals more than this run is projected to produce, so it ` +
+         `is being pursued at ${(100 * goalScale).toFixed(0)}% of the numbers you ` +
+         `entered, keeping the same balance between stats. "Met" still means the ` +
+         `full number you asked for`]
+      : []),
     ...(isCampTurn(state.turn)
       ? ["this is a summer camp turn: every facility trains at level 5 " +
          "regardless of its own level, and the training does not count toward " +
@@ -317,6 +353,7 @@ export function plan(
     recommendations,
     plan: steps,
     songs: songPlan(scenario, state, compiled),
+    goalScale,
     prices,
     topIsClear,
     baseline,
@@ -452,4 +489,4 @@ function shopReason(
 }
 
 export { compileTarget, shortfallByStat, DEFAULT_BEAM, DEFAULT_ROLLOUT };
-export type { PlannedAction, ShadowPrices, GoalEstimate, CompiledTarget, ObjectiveMode, TargetNorm };
+export type { PlannedAction, ShadowPrices, GoalEstimate, CompiledTarget, ObjectiveMode, TargetNorm, TargetScale };

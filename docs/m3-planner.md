@@ -191,22 +191,75 @@ speed **35% -> 81%**, wit **19% -> 44%**, stamina **100% -> 88%**.
 The estimate *grew* from +0.200 at n = 20 to +0.271 at n = 48 — the opposite of
 the shape this project has twice mistaken for a result.
 
-### Where `points` is worse
+### The unreachable case, and a metric that lied
 
-On an **unreachable** target it is worse on the thing that matters. Against his
-stated 1600/650/1200/550/1000 build, neither norm meets everything, but
-`fraction` meets 0.40 of the five targets on average and `points` meets
-**0.00** (t = -3.56): `points` chases the big goals proportionally — speed 408
--> 909, wit 397 -> 526 — and abandons the small reachable ones — stamina 586 ->
-306, guts 459 -> 279.
+0022 first reported `points` as *worse* on an unreachable target: against the
+stated 1600/650/1200/550/1000 build, `fraction` meets 0.42 of the five targets
+and `points` meets **0.00**. That reading was wrong, and the metric is why.
 
-This is the predicted failure mode, and it is confined to a state the product
-is already supposed to prevent: `statOutlook` (0019) reports an unreachable
-target before the first recommendation. The honest fix is to renormalise
-against the projected reachable frontier rather than the typed goal, which is
-the number `statOutlook` already computes. Not done.
+"Targets met" counts boxes, and on an unreachable target the boxes you can tick
+are the **cheap** ones. `fraction` scored 0.42 by pouring points into stamina
+(mean 597 against a 650 goal) and guts (463 against 550) while leaving speed at
+409 of 1600 — a flat build that satisfies the two goals the player cared least
+about. `points` built 882 speed / 627 power / 520 wit and ticked nothing.
 
-`--target-norm fraction` restores the old behaviour on the CLI.
+The scale-free question — *how much of the whole target did you get* — is
+`min(have/goal)` across the targeted stats. Neither norm maximises it:
+
+| n = 24 paired, unreachable target | `fraction` | `points` | paired difference |
+|---|---:|---:|---|
+| **worst-stat fraction of target** | 0.237 | **0.362** | +0.125, t = 6.58, CI [0.087, 0.162] |
+| targets met, of 5 | 0.42 | 0.00 | −0.42, t = −4.05 |
+| final stats | 2247 | **2632** | +385, t = 5.81 |
+
+`points` gets **53% further** toward the build actually asked for. There is no
+unreachable-target regression; there was a metric that rewarded abandoning the
+expensive half of a target.
+
+## `TargetScale` — what the goals are measured against
+
+A real defect does survive, and it is mechanical. Under `points` the *only*
+thing that makes the search change facilities is a stat reaching its goal and
+dropping to the overshoot weight. When **no** goal is reachable nothing ever
+saturates, nothing ever switches, and the objective degenerates to "take the
+highest-yield facility every turn" — it loses its steering mechanism exactly
+when the player has over-asked.
+
+`TargetScale: "frontier"` — **the default** — scales every goal by one scalar so
+their total is what `projectFinals` expects the run to produce:
+`scale = min(1, sum(projected) / sum(goal))`, computed once at the root and
+compiled in.
+
+**One scalar, not one per stat.** Scaling each stat toward its own projection is
+self-fulfilling: a stat the rollout policy neglects projects low, so its goal
+shrinks, so it saturates, so it is neglected harder. A single scalar cannot do
+that, and it preserves the **ratios** the player expressed — asking for 1600
+speed and 650 stamina says speed matters ~2.5x as much, and that is still
+information after you are told the whole thing is out of reach.
+
+**It never scales up, and it never moves `meetsTarget`.** "Met" is always the
+raw number typed. `CompiledTarget.wanted` carries `want` (typed, for the
+predicate) and `goal` (scaled, for scoring) separately so a rescaling cannot
+quietly redefine success. `plan()` returns `goalScale` and adds an assumption
+line when it is below 1 — a recommendation aimed at 51% of what someone asked
+for, presented as if aimed at what they asked for, is the same silent refusal
+`statOutlook` exists to end.
+
+| n = 24 paired, unreachable target | `typed` | `frontier` | paired difference |
+|---|---:|---:|---|
+| **worst-stat fraction of target** | 0.362 | **0.418** | +0.057, t = 4.35, CI [0.031, 0.082] |
+| final stats | **2632** | 2433 | −199, t = −5.14 |
+
+**It is a trade, not a free win.** `frontier` buys balance with raw output. The
+neutral metric prefers it; total stats prefer `typed`, and "total shortfall"
+prefers `typed` because that is nearly what `typed` maximises. The decision
+rests on the neutral one.
+
+On a **reachable** target it is a no-op: 15 of 16 paired seeds produced
+identical careers, the sixteenth differing only where the projection dipped
+under the goal total mid-run. That is what makes it safe as a default.
+
+`--target-norm fraction` and `--target-scale typed` restore the old behaviour.
 
 ---
 

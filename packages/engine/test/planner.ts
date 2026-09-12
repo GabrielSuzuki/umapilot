@@ -23,7 +23,7 @@ import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
 import {
   compileTarget, shortfallScore, meetsTarget, wilson, effectiveStat, HALVING_THRESHOLD,
-  DEFAULT_TARGET_NORM,
+  DEFAULT_TARGET_NORM, DEFAULT_TARGET_SCALE,
 } from "../src/planner/objective";
 import { rollout, greedyShop, stateValue, projectFinals, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
@@ -318,6 +318,70 @@ const RO: RolloutOptions = { ...DEFAULT_ROLLOUT, policyTarget };
   );
   const sc0 = shortfallScore(base, skillsOnly);
   check("a stats-free target does not divide by zero", Number.isFinite(sc0), `score ${sc0}`);
+}
+
+// ---------------------------------------------------------------------------
+// TargetScale -- what the goals are measured against
+//
+// Under `norm: "points"` the ONLY thing that makes the search switch facilities
+// is a stat reaching its goal and dropping to the overshoot weight. So when no
+// goal is reachable, nothing saturates, nothing switches, and the objective
+// degenerates to "take the highest-yield facility every turn". Scaling the
+// goals down by one scalar restores the saturation without touching the ratios
+// the player expressed -- and without touching what "met" means.
+// ---------------------------------------------------------------------------
+
+{
+  const scenario = makeScenario();
+  const base = scenario.initialState();
+  const BIG: RunTarget = {
+    ...EMPTY_TARGET,
+    stats: { speed: 800, stamina: null, power: null, guts: 200, wit: null },
+  };
+  const typed = compileTarget(BIG, undefined, "race-effective", "points", 1);
+  const half = compileTarget(BIG, undefined, "race-effective", "points", 0.5);
+
+  check("a scale leaves the typed number alone and moves only the scoring goal",
+    typed.wanted.every((w) => w.want === w.goal) &&
+    half.wanted.every((w) => w.want === 2 * w.goal) &&
+    half.wanted.map((w) => w.want).join() === typed.wanted.map((w) => w.want).join(),
+    `speed want ${half.wanted[0]!.want} scored against ${half.wanted[0]!.goal}`);
+
+  check("a scale preserves the ratio between goals",
+    half.wanted[0]!.goal / half.wanted[1]!.goal === typed.wanted[0]!.goal / typed.wanted[1]!.goal,
+    `800:200 stays ${half.wanted[0]!.goal}:${half.wanted[1]!.goal}`);
+
+  // The point of the whole exercise: at 400 speed the typed target is still far
+  // away and pays the flat price, while the scaled one has saturated and pays
+  // the overshoot weight -- which is what makes the search look elsewhere.
+  const at400: GcRunState = { ...base, stats: { speed: 400, stamina: 0, power: 0, guts: 100, wit: 0 } };
+  const bid = (t: ReturnType<typeof compileTarget>, stat: Stat, from: GcRunState) =>
+    shortfallScore({ ...from, stats: { ...from.stats, [stat]: from.stats[stat] + 1 } }, t)
+    - shortfallScore(from, t);
+  check("scaling restores the saturation that makes the search switch facilities",
+    bid(typed, "speed", at400) > bid(half, "speed", at400) * 5,
+    `typed bids ${bid(typed, "speed", at400).toExponential(2)} at speed 400, ` +
+    `scaled bids ${bid(half, "speed", at400).toExponential(2)} -- saturated`);
+
+  // Non-negotiable: a rescaling must never move the definition of success.
+  const short: GcRunState = { ...base, stats: { speed: 799, stamina: 0, power: 0, guts: 200, wit: 0 } };
+  const done: GcRunState = { ...base, stats: { speed: 800, stamina: 0, power: 0, guts: 200, wit: 0 } };
+  check("a scaled target is NOT easier to meet",
+    !meetsTarget(short, half) && !meetsTarget(short, typed) &&
+    meetsTarget(done, half) && meetsTarget(done, typed),
+    "speed 799 fails under both scales, 800 passes under both");
+
+  check('"frontier" is the shipped default, and it is a no-op on a reachable target',
+    DEFAULT_TARGET_SCALE === "frontier",
+    "15 of 16 paired seeds on the reachable target were identical under both scales; " +
+    "it changes behaviour only where the typed target was not achievable");
+
+  check("a scale never goes above 1, whatever the caller passes",
+    compileTarget(BIG, undefined, "race-effective", "points", 4).goalScale === 1 &&
+    compileTarget(BIG, undefined, "race-effective", "points", 0).goalScale === 1 &&
+    compileTarget(BIG, undefined, "race-effective", "points", NaN).goalScale === 1,
+    "scaling a target UP would invent ambition the player did not express; " +
+    "a scale of 0 would make every stat instantly met and the objective flat");
 }
 
 // ---------------------------------------------------------------------------
