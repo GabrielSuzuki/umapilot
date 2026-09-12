@@ -24,7 +24,7 @@ import { plan } from "../src/planner";
 import {
   compileTarget, shortfallScore, meetsTarget, wilson, effectiveStat, HALVING_THRESHOLD,
 } from "../src/planner/objective";
-import { rollout, greedyShop, stateValue, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
+import { rollout, greedyShop, stateValue, projectFinals, DEFAULT_ROLLOUT, type RolloutOptions } from "../src/planner/rollout";
 import { shadowPrices } from "../src/planner/shadow";
 import { turnCandidates, actionKey } from "../src/planner/beam";
 import {
@@ -1155,6 +1155,79 @@ function playPolicy(
     }
     return true;
   })());
+
+  // -------------------------------------------------------------------------
+  // Is the target actually in reach?
+  // -------------------------------------------------------------------------
+  //
+  // THE HAZARD THESE PIN. `shortfallScore` maximises the mean fraction of
+  // targets met with each stat capped at its own target, so a target the run
+  // cannot reach is best served by ABANDONING it and maxing the others. Asked
+  // for 1625 Speed, plan() scored best by pumping Stamina and Guts and leaving
+  // Speed at 387 -- and said nothing. `validateTarget` cannot catch this: it
+  // sees caps and skills, not the deck, the turn or the state.
+  //
+  // The first check is the one that matters. A warning that fires on reachable
+  // targets is worse than no warning, because it trains the user to ignore it.
+
+  {
+    const sc2 = makeScenario();
+    const st2 = sc2.initialState();
+    const FASTP = { ...FAST, probabilitySamples: 0, probabilityFor: 0, seed: 3 } as const;
+
+    // What does this scenario actually project? Everything below is relative to
+    // that, so the checks cannot drift when the model changes.
+    const proj = projectFinals(sc2, st2, 99, 8, { ...DEFAULT_ROLLOUT, policyTarget: {}, truncateAfter: 0 });
+
+    check("a projection of the final line plays the WHOLE career", (() => {
+      // It used to inherit the shadow prices' truncated rollout and reported
+      // ~216 Speed for a career finishing near 900 -- the right value of the
+      // wrong quantity. Untruncated must strictly exceed truncated.
+      const short = projectFinals(sc2, st2, 99, 8, { ...DEFAULT_ROLLOUT, policyTarget: {}, truncateAfter: 5 });
+      return STATS.reduce((a, f) => a + proj.mean[f], 0)
+           > STATS.reduce((a, f) => a + short.mean[f], 0);
+    })(), `full ${STATS.reduce((a, f) => a + proj.mean[f], 0).toFixed(0)} vs truncated ` +
+          `${STATS.reduce((a, f) => a + projectFinals(sc2, st2, 99, 8, { ...DEFAULT_ROLLOUT, policyTarget: {}, truncateAfter: 5 }).mean[f], 0).toFixed(0)}`);
+
+    // A target comfortably inside the projection must NOT be flagged.
+    const easy: RunTarget = {
+      ...EMPTY_TARGET,
+      stats: Object.fromEntries(STATS.map((f) => [f, Math.max(1, Math.floor(proj.mean[f] * 0.5))])) as RunTarget["stats"],
+    };
+    const rEasy = plan(sc2, st2, easy, FASTP);
+    check("a reachable target raises no unreachable warning",
+      rEasy.outlook.every((o) => o.status !== "not projected")
+      && !(rEasy.warning ?? "").includes("not projected to reach"),
+      rEasy.outlook.map((o) => `${o.stat} ${o.status}`).join(", "));
+
+    // A target far outside it must be flagged, and must NAME the stat -- "some
+    // targets are unreachable" just sends the user hunting.
+    const hard: RunTarget = {
+      ...EMPTY_TARGET,
+      stats: { ...EMPTY_TARGET.stats, speed: Math.ceil(proj.mean.speed * 10) + 500 },
+    };
+    const rHard = plan(sc2, st2, hard, FASTP);
+    check("an out-of-reach target is flagged, by name", (() => {
+      const o = rHard.outlook.find((x) => x.stat === "speed");
+      return o?.status === "not projected"
+        && (rHard.warning ?? "").includes("speed")
+        && (rHard.warning ?? "").includes("not projected to reach");
+    })(), rHard.outlook.map((o) => `${o.stat} want ${o.want} projects ${o.projected} (${o.status})`).join("; "));
+
+    // The warning has to come FIRST: it changes how every recommendation below
+    // should be read, so burying it under the standing calibration caveat would
+    // defeat the point of having it.
+    check("the unreachable warning leads, ahead of the standing caveat", (() => {
+      const w = rHard.warning ?? "";
+      return w.indexOf("not projected to reach") < w.indexOf("calibrated on ONE logged run");
+    })());
+
+    // Untargeted stats are not opinions. A null slot means "no target", not a
+    // target of zero, and it must not appear in the outlook at all.
+    check("a stat with no target gets no outlook entry",
+      rHard.outlook.length === 1 && rHard.outlook[0]!.stat === "speed",
+      `${rHard.outlook.length} entries`);
+  }
 
   // -------------------------------------------------------------------------
   // The Concert Bonus

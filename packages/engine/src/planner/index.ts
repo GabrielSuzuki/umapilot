@@ -28,12 +28,12 @@ import type { TurnAction, ShopAction, Recommendation, ValueBreakdown, PlanStep }
 import { ENERGY_MAX, isCampTurn, type GrandConcertScenario, type GcRunState } from "../scenarios/grand-concert";
 import { mulberry32 } from "../rng";
 import { competentPolicy } from "../policy";
-import type { RunTarget } from "../target";
+import { statOutlook, outlookWarning, type RunTarget, type StatOutlook } from "../target";
 import {
   compileTarget, shortfallScore, shortfallByStat, separable,
   type CompiledTarget, type GoalEstimate, type ObjectiveMode, type StatValueMode,
 } from "./objective";
-import { goalProbability, stateValue, rolloutTrace, type RolloutOptions, DEFAULT_ROLLOUT } from "./rollout";
+import { goalProbability, stateValue, rolloutTrace, projectFinals, type RolloutOptions, DEFAULT_ROLLOUT } from "./rollout";
 import { shadowPrices, zeroPrices, type ShadowPrices } from "./shadow";
 import {
   beamSearch, actionKey, shopPlan,
@@ -104,6 +104,14 @@ export interface PlanResult {
     nodesExpanded: number; rollouts: number; ms: number;
     objective: ObjectiveMode;
   };
+  /**
+   * Each targeted stat against where the run is actually projected to land.
+   *
+   * The planner's objective abandons a target it cannot meet -- correctly, by
+   * its own definition, and invisibly to the user. This is what makes that
+   * visible. See `statOutlook`.
+   */
+  outlook: StatOutlook[];
   assumptions: string[];
   warning?: string;
 }
@@ -180,6 +188,26 @@ export function plan(
     scenario, state, compiled, (beamOpts.seed ^ 0x5f356495) >>> 0,
     beamOpts.leafSamples, shadowRollout,
   );
+
+  // Where the run is actually projected to finish, stat by stat. Same rollouts,
+  // same seeding, read for the stat line instead of the score -- so it costs a
+  // handful of rollouts and answers the question `validateTarget` structurally
+  // cannot: not "is this target above the cap" but "does this model expect to
+  // get there". The objective abandons a target it cannot meet, and until now
+  // it did so silently. See `statOutlook`.
+  //
+  // `ro`, NOT `shadowRollout`. The shadow prices deliberately truncate at
+  // `leafTruncate` turns because they are pricing a marginal resource, and a
+  // truncated rollout is the right instrument for that. A projection of where
+  // the run FINISHES is the opposite case and must play to turn 72 -- inheriting
+  // the truncation reported ~216 Speed for a career that ends near 900, which is
+  // the same value dressed as a different quantity.
+  const projection = projectFinals(
+    scenario, state, (beamOpts.seed ^ 0x1b873593) >>> 0,
+    Math.max(4, beamOpts.leafSamples), { ...ro, truncateAfter: 0 },
+  );
+  const outlook = statOutlook(target, projection.mean, projection.sd);
+  const unreachable = outlookWarning(outlook);
 
   // Goal probability for the actions a human will actually look at. Every
   // estimate uses the SAME seed base, so two actions are compared under the
@@ -293,8 +321,13 @@ export function plan(
       ms: Date.now() - t0,
       objective,
     },
+    outlook,
     assumptions,
+    // The unreachable-target warning goes FIRST when there is one. It changes
+    // how every recommendation below should be read, so burying it under the
+    // standing calibration caveat would defeat the point.
     warning:
+      (unreachable ? unreachable + " " : "") +
       "The underlying simulator is calibrated on ONE logged run. Treat the " +
       "ranking as a hypothesis about this model, not a measurement of the game.",
   };

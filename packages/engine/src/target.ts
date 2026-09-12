@@ -167,6 +167,95 @@ export function validateTarget(
   return problems;
 }
 
+// ---------------------------------------------------------------------------
+// Is the target actually in reach?
+// ---------------------------------------------------------------------------
+
+/** One stat's target against what the model projects for it. */
+export interface StatOutlook {
+  stat: Stat;
+  want: number;
+  /** Mean final value over the projection's rollouts. */
+  projected: number;
+  /** Spread across those rollouts, so a near miss is not read as a verdict. */
+  sd: number;
+  /**
+   * How far short, in standard deviations. Negative means the projection clears
+   * the target. This is the number that decides `status`, because a 40-point
+   * miss means something different on a stat that varies by 30 than on one that
+   * varies by 300.
+   */
+  shortBy: number;
+  status: "on track" | "close" | "not projected";
+}
+
+/**
+ * Compare a target to where the run is actually projected to land.
+ *
+ * WHY THIS IS SEPARATE FROM `validateTarget`. That function sees caps and
+ * skills, and it is right that it does -- it runs while the user is still typing
+ * and has no deck, no turn and no state. But the failure it cannot catch is the
+ * important one: `shortfallScore` maximises the mean fraction of targets met
+ * with each stat capped at its own target, so an out-of-reach target is best
+ * served by ABANDONING it and maxing the others. Ask for 1625 Speed and the
+ * planner pumps Stamina and Guts, and nothing says the Speed target was refused
+ * rather than pursued. Measured per-turn: stamina recommended on 11 of 30 turns
+ * against the player's 3 (`replay-validation.md`).
+ *
+ * "NOT PROJECTED", NOT "IMPOSSIBLE". The captured career finished at 1635 Speed,
+ * so a bound claiming 1600 is unreachable would simply be wrong. The model tops
+ * out far lower because it has no races and no event outcomes. The honest claim
+ * is about the model's own expectation, and the wording says so.
+ *
+ * The threshold is two standard deviations of the projection itself rather than
+ * a stat-point constant: it is the same "is this separable from noise" test the
+ * rest of the planner uses, and it needs no tuning.
+ */
+export function statOutlook(
+  target: RunTarget,
+  projected: StatVector,
+  sd: StatVector,
+): StatOutlook[] {
+  const out: StatOutlook[] = [];
+  for (const stat of STATS) {
+    const want = target.stats[stat];
+    if (want === null || want <= 0) continue;
+    const spread = Math.max(sd[stat], 1e-9);
+    const shortBy = (want - projected[stat]) / spread;
+    out.push({
+      stat,
+      want,
+      projected: Math.round(projected[stat]),
+      sd: Math.round(sd[stat]),
+      shortBy,
+      status: shortBy <= 0 ? "on track" : shortBy < 2 ? "close" : "not projected",
+    });
+  }
+  return out;
+}
+
+/**
+ * The one-line warning a UI should show above the first recommendation, or null
+ * when every target is in reach.
+ *
+ * Named targets, because "some targets are unreachable" sends the user hunting.
+ */
+export function outlookWarning(outlook: StatOutlook[]): string | null {
+  const missed = outlook.filter((o) => o.status === "not projected");
+  if (missed.length === 0) return null;
+  const parts = missed
+    .map((o) => `${o.stat} ${o.want} (projects ~${o.projected})`)
+    .join(", ");
+  const rest = outlook.filter((o) => o.status !== "not projected").map((o) => o.stat);
+  return (
+    `This run is not projected to reach ${parts}. The objective scores a target ` +
+    `it cannot meet by spending elsewhere, so the advice below will favour ` +
+    `${rest.length ? rest.join(" and ") : "the reachable stats"} rather than ` +
+    `pursue ${missed.length > 1 ? "those targets" : "that target"}. Lower ` +
+    `${missed.length > 1 ? "them" : "it"} to get advice that chases what you asked for.`
+  );
+}
+
 /**
  * Total SP the wishlist costs, ignoring hint discounts.
  *

@@ -38,7 +38,7 @@ import type { GrandConcertScenario, GcRunState } from "../scenarios/grand-concer
 import type { ShopAction } from "../scenario";
 import type { Policy } from "../policy";
 import { focusedPolicy, competentPolicy } from "../policy";
-import { TOKENS, type Stat } from "../../../data/src/types";
+import { STATS, TOKENS, ZERO_STATS, type Stat, type StatVector } from "../../../data/src/types";
 import {
   shortfallScore, meetsTarget, goalEstimate,
   type CompiledTarget, type GoalEstimate,
@@ -309,6 +309,53 @@ export function stateSamples(
     out.push(shortfallScore(rollout(scenario, state, seed + i, opts), target));
   }
   return out;
+}
+
+/**
+ * Where each stat actually lands if the run simply plays on from here.
+ *
+ * Same machinery as `stateSamples` and the same seeding discipline -- sample
+ * `i` uses `seed + i` -- but it reports the STAT LINE rather than its score.
+ *
+ * WHY THIS EXISTS. `shortfallScore` maximises the mean fraction of targets met
+ * and caps each stat's contribution at its own target, so when one target is out
+ * of reach the way to raise the mean is to abandon it and max the reachable
+ * ones. That is correct behaviour for the objective and a trap for the user: ask
+ * for 1625 Speed and the planner scores best by pumping Stamina, with nothing on
+ * screen saying the Speed target was refused rather than pursued
+ * (`replay-validation.md`, both parts). `validateTarget` cannot catch it -- it
+ * sees caps and skills, not the deck, the turn or the state -- so the check has
+ * to live where the rollouts are.
+ *
+ * A projection, not a bound. It says what THIS model expects from THIS state,
+ * which is the honest claim: the captured career really did finish at 1635
+ * Speed, so "unreachable" would be false. What is true is that the model does
+ * not expect to get there, and a user is entitled to know that before spending
+ * 72 turns finding out.
+ */
+export function projectFinals(
+  scenario: GrandConcertScenario,
+  state: GcRunState,
+  seed: number,
+  samples: number,
+  opts: RolloutOptions,
+): { mean: StatVector; sd: StatVector; samples: number } {
+  const mean = { ...ZERO_STATS };
+  const sd = { ...ZERO_STATS };
+  if (samples <= 0) return { mean: { ...state.stats }, sd, samples: 0 };
+
+  const runs: StatVector[] = [];
+  for (let i = 0; i < samples; i++) {
+    runs.push({ ...rollout(scenario, state, seed + i, opts).stats });
+  }
+  for (const stat of STATS) {
+    const xs = runs.map((r) => r[stat]);
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    mean[stat] = m;
+    sd[stat] = xs.length < 2 ? 0
+      : Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
+  }
+  return { mean, sd, samples };
 }
 
 /**
