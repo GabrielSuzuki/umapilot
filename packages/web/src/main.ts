@@ -21,7 +21,7 @@ import { loadDataset } from "./dataset";
 import { defaultSetup, makeScenario, editableFrom, applyEditable, type Editable } from "./run";
 import { imageFromFile, scanImage, applyScan, type ScanResult } from "./scan";
 import { mountCapture } from "./capture";
-import { mountSetup, loadStored, saveStored, storedFrom, setupFrom, type StoredSetup } from "./setup";
+import { mountSetup, loadStored, saveStored, storedFrom, setupFrom, type StoredSetup, type SetupPane } from "./setup";
 import type { FrameReading } from "../../engine/src/vision/read";
 
 const app = document.getElementById("app")!;
@@ -328,8 +328,17 @@ tabs.addEventListener("click", (e) => {
  * player typed. Facility levels are read but deliberately not applied -- they
  * belong to the run setup rather than to this turn.
  */
+let setupPane: SetupPane | null = null;
+
 function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean): void {
   edit = applyScan(edit, r);
+  // THE CAPS ARE NOT CONSTANT. They were treated as a per-run number read once
+  // off Legacy Select until the cap row was read on all 58 captured training
+  // frames: speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power
+  // 1332 -> 1337 -> 1343, both steps on the first turn of a new year. So every
+  // frame offers its caps to the setup, which takes them only when they rise
+  // and only then pays for a scenario rebuild.
+  setupPane?.setCaps(r.statCaps);
   // The turn is the one field the scan path deliberately never set, because
   // `turnsLeft` on the screen counts to the next GOAL and is not the career
   // position. The capture pane derives the real turn from the concert
@@ -363,7 +372,7 @@ mountCapture(paneCapture, applyFromCapture);
  * fields on every card change would make the setup pane unusable, because
  * entering six cards would wipe the state six times.
  */
-mountSetup(paneSetup, loaded.supportCards, stored, (next) => {
+setupPane = mountSetup(paneSetup, loaded.supportCards, stored, (next) => {
   stored = next;
   saveStored(next);
   const rebuilt = setupFrom(next, loaded.supportCards);

@@ -97,6 +97,40 @@ corroborate the screenshot, and the screenshot proves the caps are dynamic. That
 is two independent sources agreeing, which is the standard the whole dataset is
 held to.
 
+**And they are not per-run either. They move within a run.** (2026-09-13.)
+
+That sentence above — "per-run, not per-scenario" — was half the finding, and the
+half it got wrong stayed wrong for a week because a per-run constant is read once
+and never questioned again. Reading the cap row on all 58 training frames of the
+captured career (`tools/vision/caps-probe.ts`):
+
+| | Junior + Classic to Mar | Classic Apr → | Senior Apr → |
+|---|---|---|---|
+| Speed   | 1625 | 1630 | 1635 |
+| Stamina | 1332 | 1336 | 1342 |
+| Power   | 1332 | 1337 | 1343 |
+| Guts    | 1500 | 1500 | 1500 |
+| Wit     | 1300 | 1300 | 1304 |
+
+Both steps land on the first turn of a new year — the same boundary at which the
+performance-point cap goes 300 → 350 → 400, which the transcription had already
+recorded without anyone connecting the two. What raises them is not known, and
+the steps are not a flat bonus or a clean percentage: guts never moves and wit
+moves once.
+
+Three witnesses, none of them the OCR that proposed the numbers: the player's
+Legacy Select transcription for the first column; his own note on frame 59
+("Stat caps have crept up to 1635/1342/1343/1500/1304"), written while
+transcribing and before anyone was looking for this; and frame 80, where speed
+sits at 1635 with the training preview reading +0, i.e. the cap read off a
+different field in a different template set.
+
+Consequence for the app: the cap row is read **every turn**, not once. A cap
+scanned at Legacy Select and held is 10 points low for the last third of a
+career, which is exactly the region where `statOutlook` is deciding whether more
+speed is worth anything. See `capField` in `packages/engine/src/vision/fields.ts`
+and `examples/stat-caps-2026-09-05.json`.
+
 ---
 
 ## What the scan produces

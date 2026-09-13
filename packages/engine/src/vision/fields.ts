@@ -7,10 +7,10 @@ import { inkMask, fractionOfMaxThreshold } from "./image";
 import type { RgbaImage as _Rgba } from "./image";
 import { segmentGlyphs, type Glyph, type SegmentOptions } from "./segment";
 import {
-  LAYOUT, REF_W, REF_H, scaleBox, statValueBox, chipLevelBox, type RefBox,
+  LAYOUT, REF_W, REF_H, scaleBox, statValueBox, chipLevelBox, statCapBox, type RefBox,
 } from "./layout";
 
-export type FieldStyle = "bigDark" | "bigLight" | "smallChip" | "bigChip";
+export type FieldStyle = "bigDark" | "bigLight" | "smallChip" | "bigChip" | "capSmall";
 
 export interface FieldSpec {
   box: RefBox;
@@ -33,6 +33,16 @@ export interface FieldSpec {
    */
   thresholdFractionOfMax?: number;
   segment?: SegmentOptions;
+  /**
+   * Drop this many components off the LEFT before matching.
+   *
+   * Only the cap row uses it, and only for the "/" that always precedes the
+   * number. Dropping it by position is exact -- it is the leftmost component
+   * and it is always there -- where cropping it out by x is not, because the
+   * slash sits at a scale-dependent offset and a box tight enough to exclude it
+   * clips the first digit on a smaller panel.
+   */
+  dropLeading?: number;
 }
 
 export const FIELDS = {
@@ -105,7 +115,38 @@ export function fieldGlyphs(panel: RgbaImage, spec: FieldSpec): Glyph[] {
     ? fractionOfMaxThreshold(panel, box, spec.thresholdFractionOfMax)
     : spec.threshold;
   const mask = inkMask(panel, box, spec.polarity, threshold);
-  return segmentGlyphs(mask, spec.segment ?? {});
+  const glyphs = segmentGlyphs(mask, spec.segment ?? {});
+  return spec.dropLeading ? glyphs.slice(spec.dropLeading) : glyphs;
+}
+
+/**
+ * A stat's cap, the "/1625" printed under its value.
+ *
+ * ITS OWN TEMPLATE SET, not `bigDark`, and the measurement says why: the
+ * cap digits are drawn at roughly half the height of the value digits, and
+ * matching them against value templates reads 16 of 40 known caps -- refusing
+ * the rest rather than getting them wrong, but refusing most of them. Templates
+ * cut from the cap row itself read 290 of 290. The normalisation to 12x16 makes
+ * the sizes comparable, not identical: a 40px digit downsampled and a 20px
+ * digit upsampled do not land on the same anti-aliasing.
+ *
+ * WORTH READING AT ALL because the cap MOVES during a run. It was taken for a
+ * per-run constant, set by legacy at the Legacy Select screen, and the captured
+ * career disproves it: speed went 1625 -> 1630 -> 1635, stamina 1332 -> 1336 ->
+ * 1342, power 1332 -> 1337 -> 1343, wit 1300 -> 1300 -> 1304, guts 1500
+ * throughout. Both steps land on the first turn of a new year. See
+ * `tools/vision/caps-probe.ts`.
+ */
+export function capField(i: number): FieldSpec {
+  return {
+    box: statCapBox(i),
+    polarity: "dark",
+    threshold: 60,
+    style: "capSmall",
+    // The "/" is a component like any other and would be matched as a digit.
+    dropLeading: 1,
+    segment: { minHeight: 6 },
+  };
 }
 
 export { REF_W, REF_H };

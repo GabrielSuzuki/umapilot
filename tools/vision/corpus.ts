@@ -41,6 +41,14 @@ export interface Label {
    * they were adding up the fields that did work.
    */
   stats?: number[];
+  /**
+   * Stat CAPS as an array in STATS order, same shape as `stats`.
+   *
+   * Not in the hand transcription -- it comes from `examples/stat-caps-*.json`
+   * via `applyCapSegments`, because the caps hold still for a whole year at a
+   * time and writing them out per frame would be 58 copies of three numbers.
+   */
+  caps?: number[];
   skillPts?: number;
   summerCamp?: boolean;
   action?: string;
@@ -72,4 +80,39 @@ export function loadLabels(path: string): Map<number, Label> {
 export const INDUCE_FRAMES = 8;
 export function isInductionFrame(frame: number, labelled: number[]): boolean {
   return labelled.slice(0, INDUCE_FRAMES).includes(frame);
+}
+
+/**
+ * Stat caps, recorded as SEGMENTS rather than per frame.
+ *
+ * The cap changes twice in the captured career and is constant in between, so
+ * the file records the three values and the frame each starts at. Labelling it
+ * per frame would be the same three numbers written 58 times, and the first
+ * time a frame was mislabelled nobody would spot it among the copies.
+ *
+ * The first segment is not a reading at all: it is what the Legacy Select
+ * screen said before the run started, already recorded in
+ * `examples/real-run.json`. That is the anchor that keeps the whole thing from
+ * being circular -- the later segments are read off the frames, but they are
+ * only trusted because the digits they are read with were taught by a number a
+ * human wrote down somewhere else.
+ */
+export interface CapSegments {
+  note?: string;
+  segments: { fromFrame: number; caps: number[] }[];
+}
+
+export function loadCapSegments(path: string): CapSegments {
+  const raw = JSON.parse(readFileSync(path, "utf8")) as CapSegments;
+  const segs = [...raw.segments].sort((a, b) => a.fromFrame - b.fromFrame);
+  return { ...raw, segments: segs };
+}
+
+/** Stamp each label with the caps in force on its frame. */
+export function applyCapSegments(labels: Map<number, Label>, segs: CapSegments): void {
+  for (const [frame, label] of labels) {
+    let caps: number[] | undefined;
+    for (const s of segs.segments) if (frame >= s.fromFrame) caps = s.caps;
+    if (caps) label.caps = caps;
+  }
 }

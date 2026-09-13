@@ -9,7 +9,7 @@
  */
 import type { RgbaImage } from "./image";
 import { readNumber } from "./segment";
-import { FIELDS, statField, chipLevelField, fieldGlyphs, selectedFacility } from "./fields";
+import { FIELDS, statField, capField, chipLevelField, fieldGlyphs, selectedFacility } from "./fields";
 import { GLYPH_TEMPLATES } from "./glyphs";
 import { probeScreen, type ScreenProbe } from "./classify";
 import { STATS, type Stat } from "../../../data/src/types";
@@ -20,6 +20,16 @@ export interface FrameReading {
   concertIn?: number;
   skillPts?: number;
   stats: Partial<Record<Stat, number>>;
+  /**
+   * Stat caps, the "/1625" under each value, where legible.
+   *
+   * Read every turn rather than once, because the cap MOVES: in the captured
+   * career speed went 1625 -> 1630 -> 1635 and stamina 1332 -> 1336 -> 1342,
+   * both steps landing on the first turn of a new year. A cap read once at the
+   * Legacy Select screen and held for 72 turns is wrong for two thirds of the
+   * run. See `capField` and `tools/vision/caps-probe.ts`.
+   */
+  statCaps: Partial<Record<Stat, number>>;
   /** Facility levels, where legible. See `chipLevelsHidden`. */
   facilityLevels: Partial<Record<Stat, number>>;
   /** Which facility's chip is raised, if exactly one could be identified. */
@@ -44,16 +54,23 @@ const EMPTY: Partial<Record<Stat, number>> = {};
 export function readFrame(panel: RgbaImage): FrameReading {
   const screen = probeScreen(panel);
   if (screen.kind !== "training") {
-    return { screen, stats: { ...EMPTY }, facilityLevels: { ...EMPTY }, chipLevelsHidden: false };
+    return { screen, stats: { ...EMPTY }, statCaps: { ...EMPTY }, facilityLevels: { ...EMPTY }, chipLevelsHidden: false };
   }
 
   const num = (spec: Parameters<typeof fieldGlyphs>[1]) =>
     readNumber(fieldGlyphs(panel, spec), GLYPH_TEMPLATES.get(spec.style) ?? [])?.value;
 
   const stats: Partial<Record<Stat, number>> = {};
+  const statCaps: Partial<Record<Stat, number>> = {};
   for (let i = 0; i < STATS.length; i++) {
     const v = num(statField(i));
     if (v !== undefined) stats[STATS[i]!] = v;
+    // A cap below 1000 is not a cap -- the Grand Concert base is 1300 at the
+    // lowest and legacy only raises it. Anything smaller is a segmentation
+    // accident, and letting one through would tell the planner a stat is
+    // already over its ceiling and worth nothing for the rest of the run.
+    const cap = num(capField(i));
+    if (cap !== undefined && cap >= 1000 && cap <= 2000) statCaps[STATS[i]!] = cap;
   }
 
   // WHICH CHIP IS SELECTED comes from the chevrons under it, not from its
@@ -99,6 +116,7 @@ export function readFrame(panel: RgbaImage): FrameReading {
     ...(concertIn !== undefined ? { concertIn } : {}),
     ...(skillPts !== undefined ? { skillPts } : {}),
     stats,
+    statCaps,
     facilityLevels,
     ...(selected !== undefined ? { selected } : {}),
     chipLevelsHidden: Object.keys(facilityLevels).length === 0,

@@ -5,7 +5,7 @@
  */
 import type { RgbaImage } from "../../packages/engine/src/vision/image";
 import { GLYPH_W, GLYPH_H, type Glyph } from "../../packages/engine/src/vision/segment";
-import { FIELDS, statField, chipLevelField, fieldGlyphs, type FieldStyle, type FieldSpec } from "../../packages/engine/src/vision/fields";
+import { FIELDS, statField, capField, chipLevelField, fieldGlyphs, type FieldStyle, type FieldSpec } from "../../packages/engine/src/vision/fields";
 import type { Label } from "./corpus";
 
 export const STATS = ["speed", "stamina", "power", "guts", "wit"] as const;
@@ -22,6 +22,15 @@ export function tasksFor(label: Label): Task[] {
     for (let i = 0; i < 5; i++) {
       const v = label.stats[i];
       if (typeof v === "number") out.push({ field: `stat:${STATS[i]}`, spec: statField(i), value: v });
+    }
+  }
+  // The cap row. Its labels come from `examples/stat-caps-*.json` via
+  // `applyCapSegments`, not from the per-frame transcription -- see the note on
+  // `Label.caps`.
+  if (label.caps) {
+    for (let i = 0; i < 5; i++) {
+      const v = label.caps[i];
+      if (typeof v === "number") out.push({ field: `cap:${STATS[i]}`, spec: capField(i), value: v });
     }
   }
   // Summer camp hides the chip levels entirely, so those frames teach nothing

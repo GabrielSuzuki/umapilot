@@ -1,0 +1,11 @@
+{
+  "note": "Stat caps in force during the 2026-09-05 captured career, in STATS order (speed, stamina, power, guts, wit). The caps MOVE during a run. This was carried as a per-run constant -- set by legacy, read once off Legacy Select -- until tools/vision/caps-probe.ts read the cap row on all 58 training frames.",
+  "segments": [
+    { "fromFrame": 0,  "caps": [1625, 1332, 1332, 1500, 1300] },
+    { "fromFrame": 35, "caps": [1630, 1336, 1337, 1500, 1300] },
+    { "fromFrame": 59, "caps": [1635, 1342, 1343, 1500, 1304] }
+  ],
+  "boundaries": "Segment 2 starts at the Classic Year Early Apr turn (frames 35 and 36 are the same turn); segment 3 at the Senior Year Early Apr turn (frames 59 and 60). Both steps land on the first turn of a new year -- the same boundary at which the performance-point cap goes 300 -> 350 -> 400, which the transcription already recorded.",
+  "evidence": "Three independent sources agree and none of them is the OCR that proposed the numbers. (1) Segment 1 is the player's own Legacy Select transcription, already in examples/real-run.json. (2) Segment 3 is the player's own note on frame 59: 'Stat caps have crept up to 1635/1342/1343/1500/1304', written while transcribing and before anyone was looking for this. (3) Frame 80's note records speed sitting at 1635 with the training preview reading +0, so the speed cap is 1635 exactly, read off a different field in a different template set. Segment 2 has no hand transcription and was confirmed by eye against the frames at 6x before being written here.",
+  "unexplained": "Guts does not move at all and wit moves once. The steps are +5/+4/+5/0/0 then +5/+6/+6/0/+4, which is neither a flat bonus nor a clean percentage. What raises them is not known -- this file records what the screen said, not a mechanic."
+}

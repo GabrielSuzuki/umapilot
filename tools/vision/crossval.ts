@@ -19,7 +19,7 @@
  *
  *   npx tsx tools/vision/crossval.ts <panelDir> [k]
  */
-import { loadManifest, loadPanel, loadLabels } from "./corpus";
+import { loadManifest, loadPanel, loadLabels, loadCapSegments, applyCapSegments } from "./corpus";
 import { readNumber, type Template } from "../../packages/engine/src/vision/segment";
 import { fieldGlyphs, type FieldStyle } from "../../packages/engine/src/vision/fields";
 import { newAccumulator, harvestFrame, tasksFor } from "./harvest";
@@ -28,6 +28,7 @@ const panelDir = process.argv[2] ?? "";
 const K = Number(process.argv[3] ?? 5);
 const manifest = loadManifest(panelDir);
 const labels = loadLabels("examples/facility-levels-2026-09-05.jsonl");
+applyCapSegments(labels, loadCapSegments("examples/stat-caps-2026-09-05.json"));
 
 const frames = manifest.map((m) => m.frame).filter((f) => labels.has(f)).sort((a, b) => a - b);
 const panels = new Map(manifest.filter((m) => labels.has(m.frame)).map((m) => [m.frame, loadPanel(panelDir, m)]));
@@ -59,7 +60,7 @@ for (let fold = 0; fold < K; fold++) {
   for (const f of frames) {
     if (foldOf.get(f) !== fold) continue;            // test on this fold only
     for (const task of tasksFor(labels.get(f)!)) {
-      const fieldKey = task.field.startsWith("chip:") ? "chipLevel" : task.field;
+      const fieldKey = task.field.startsWith("chip:") ? "chipLevel" : task.field.startsWith("cap:") ? "statCap" : task.field;
       const a = t(byField, fieldKey), b = t(byDigit, `${task.spec.style}:${task.value}`);
       a.n++; b.n++;
       const got = readNumber(fieldGlyphs(panels.get(f)!, task.spec), byStyle.get(task.spec.style) ?? []);

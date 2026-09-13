@@ -74,7 +74,23 @@ export function setupFrom(
   };
 }
 
-export interface SetupPane { stop(): void }
+export interface SetupPane {
+  stop(): void;
+  /**
+   * Push caps read off the game into the pane.
+   *
+   * Here rather than in the turn state because a cap is a property of the RUN,
+   * and it is pushed rather than typed because it MOVES: the captured career
+   * shows speed going 1625 -> 1630 -> 1635 and stamina 1332 -> 1336 -> 1342,
+   * each step on the first turn of a new year. A player who typed the caps off
+   * Legacy Select in Junior year would be running on stale numbers for two
+   * thirds of the career and would have no reason to suspect it.
+   *
+   * Returns whether anything changed, so the caller only pays for a scenario
+   * rebuild when it did -- which is twice in seventy-two turns.
+   */
+  setCaps(caps: Partial<Record<Stat, number>>): boolean;
+}
 
 export function mountSetup(
   host: HTMLElement,
@@ -123,9 +139,11 @@ export function mountSetup(
         ${statRow("Starting stats", "startingStats")}
         ${statRow("Stat caps", "statCaps")}
         ${statRow("Facility levels", "facilityLevels")}
-        <p class="note">Caps are per-run, not per-scenario: legacy raises them, and
-          the captured career shows them rising again mid-run. Read them off
-          Legacy Select.</p>
+        <p class="note">Caps are per-run, not per-scenario — legacy raises them, so
+          read them off Legacy Select. They also rise <em>during</em> a run: the
+          captured career went 1625 → 1630 → 1635 on speed, each step on the first
+          turn of a new year. Live capture reads the cap row every turn and raises
+          these for you, so you should not have to come back here.</p>
       </section>
       <p><button class="go" id="set-reset">Back to the captured career</button></p>`;
   }
@@ -164,5 +182,21 @@ export function mountSetup(
   });
 
   render();
-  return { stop() { /* nothing to tear down */ } };
+  return {
+    stop() { /* nothing to tear down */ },
+    setCaps(caps) {
+      let changed = false;
+      for (const s of STATS) {
+        const v = caps[s];
+        // Only ever upward. The caps in this game rise and do not fall, so a
+        // lower reading is a misread or a stale frame, and accepting it would
+        // tell the planner a stat it has already trained past is worthless.
+        if (typeof v === "number" && v > state.statCaps[s]) { state.statCaps[s] = v; changed = true; }
+      }
+      if (!changed) return false;
+      render();
+      onChange(state);
+      return true;
+    },
+  };
 }

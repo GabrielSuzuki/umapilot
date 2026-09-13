@@ -16,7 +16,7 @@
  *   npx tsx tools/vision/induce.ts <panelDir> [out.json]
  */
 import { writeFileSync } from "node:fs";
-import { loadManifest, loadPanel, loadLabels } from "./corpus";
+import { loadManifest, loadPanel, loadLabels, loadCapSegments, applyCapSegments } from "./corpus";
 import { GLYPH_W, GLYPH_H } from "../../packages/engine/src/vision/segment";
 import type { FieldStyle } from "../../packages/engine/src/vision/fields";
 import { newAccumulator, harvestFrame } from "./harvest";
@@ -28,6 +28,7 @@ if (!panelDir) { console.error("usage: induce.ts <panelDir> [out.json]"); proces
 
 const manifest = loadManifest(panelDir);
 const labels = loadLabels("examples/facility-levels-2026-09-05.jsonl");
+applyCapSegments(labels, loadCapSegments("examples/stat-caps-2026-09-05.json"));
 const STATS = ["speed", "stamina", "power", "guts", "wit"] as const;
 
 const sharedAcc = newAccumulator();

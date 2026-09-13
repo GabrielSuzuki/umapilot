@@ -56,11 +56,32 @@ late-career glyphs.
 
 | field | n | read | correct | **wrong** |
 |---|---:|---:|---:|---:|
-| skillPts | 28 | 100% | 100% | **0** |
 | concertIn | 54 | 89% | 89% | **0** |
-| turnsLeft | 69 | 88% | 88% | **0** |
+| turnsLeft | 69 | 81% | 81% | **0** |
+| skillPts | 28 | 75% | 75% | **0** |
+| stat:speed | 28 | 64% | 64% | **0** |
+| stat:stamina | 28 | 100% | 100% | **0** |
+| stat:power | 28 | 79% | 79% | **0** |
+| stat:guts | 28 | 100% | 100% | **0** |
+| stat:wit | 28 | 100% | 100% | **0** |
+| statCap | 375 | 75% | 75% | **0** |
 | chipLevel | 250 | 70% | 69% | **1** |
-| **total** | **401** | **78%** | **77%** | **1** |
+| **total** | **916** | **77%** | **77%** | **1** |
+
+**Every number in this table used to be quoted without the stat rows, and that
+was not a presentation choice — it was a bug.** `Label.stats` is an array in
+STATS order, and the harvester read it as `label.stats["speed"]`, which on an
+array is `undefined`, silently. So 140 labelled stat values never reached the
+templates and never appeared in any accuracy table, and the totals still added
+up because they were adding up the fields that did work. The reader's headline
+accuracy had been quoted for weeks for a reader that could not be shown to read
+a single stat.
+
+Fixing it changed the other fields too, downward: `skillPts` went 100% → 75% and
+`turnsLeft` 88% → 81%. Those 140 stat glyphs joined the shared `bigDark`
+templates, which made each digit's average broader and each match less certain —
+more refusals, still zero wrong answers. That is the trade working as designed,
+and it is why the read rate is not the column to optimise.
 
 **That 1 is a correction.** An earlier single-split run reported zero wrong, and
 zero was the wrong number — the split was small enough to miss it. The misread
@@ -254,11 +275,62 @@ Two things it deliberately does not do:
 - **Facility levels are read but not applied.** They belong to the run setup,
   not to this turn. They are shown so the player can see they were read.
 
+## One thing the frames said that the model did not know
+
+**Stat caps rise during a run.** This started as an anecdote from two frames and
+is now read off all 58 training frames by `tools/vision/caps-probe.ts`:
+
+| | Junior + Classic to Mar | Classic Apr → | Senior Apr → |
+|---|---:|---:|---:|
+| Speed | 1625 | 1630 | 1635 |
+| Stamina | 1332 | 1336 | 1342 |
+| Power | 1332 | 1337 | 1343 |
+| Guts | 1500 | 1500 | 1500 |
+| Wit | 1300 | 1300 | 1304 |
+
+Both steps land on the first turn of a new year. `scan-spec.md` had recorded
+caps as per-*run* — set by legacy, read once off Legacy Select — and that is the
+kind of claim nothing re-checks, because a constant is read once by definition.
+`validateTarget` and `statOutlook` were both running on it.
+
+### How it was read with no labels to induce from
+
+The cap column is not in the transcription, so there was nothing to cut cap
+templates from. The bootstrap starts from an anchor on a *different screen read
+by a human*: the Legacy Select caps in `examples/real-run.json`. Label the first
+eight frames with those, harvest, read the career.
+
+That proves movement and cannot say what to. The anchor contains only the digits
+0,1,2,3,5,6, so the moment a cap changed to a value containing a 4 or a 7 the
+read did not go wrong — it went **blank**, and the blanks arrived on exactly the
+frames where speed stepped. The refusal behaviour that exists to avoid wrong
+answers turned out to be a detector.
+
+Filling the blanks in took the `bigDark` stat-value templates to propose
+candidates. They read small cap digits badly (16 of 40 known caps) and never
+wrongly, which is the right shape for a proposer. Each proposal was then
+confirmed by eye at 6× against the frames before being written into
+`examples/stat-caps-2026-09-05.json`, and cap templates were induced from that.
+The shipped `capSmall` set reads **273 of 290** cap fields on the capture with
+**0** disagreements, and 75% read / **0 wrong** under cross-validation.
+
+Two of the three segments have a human witness that predates the search: the
+player's own note on frame 59 ("Stat caps have crept up to 1635/1342/1343/
+1500/1304"), and frame 80, where speed sits at 1635 with the training preview
+reading +0 — the cap confirmed from a different field in a different template
+set.
+
+**What raises them is not known.** Guts never moves, wit moves once, and the
+steps are +5/+4/+5/0/0 then +5/+6/+6/0/+4: neither a flat bonus nor a clean
+percentage. The app records what the screen says and re-reads it every turn
+rather than modelling it.
+
+`capSmall` has templates for 0–7 only, because 8 and 9 never appear in a cap in
+this career. A cap containing one reads as **nothing**, not as something else,
+and the player's typed value stands. A second captured career would close that.
+
 ## Not done
 
-- **Layer 3, the `getDisplayMedia` capture loop.** Only the player can test it.
-  The drop path exists partly to de-risk it: a reader bug found here is not
-  tangled up with a capture bug.
 - **Text.** The calendar string, the goal, the facility name on the banner, and
   the screen tab are all unread. Letters need letter templates, and the corpus
   labels numbers.
@@ -267,16 +339,12 @@ Two things it deliberately does not do:
   neither could be scored and neither was written.
 - **The token column.** Positions are in `layout.ts`; the transcription carries
   no token counts, so there is nothing to validate against.
-
-## One thing the frames said that the model does not know
-
-Stat caps **rise during a run**. Frame 30 (Classic Late Jan) reads
-1625/1332/1332/1500/1300; frame 43 (Classic Late Jul) reads
-1630/1336/1337/1500/1300 — speed +5, stamina +4, power +5.
-
-`scan-spec.md` records that caps are per-run rather than per-scenario, set by
-legacy. It does not say they also move *within* a run, and `validateTarget` and
-`statOutlook` both use a fixed number. Read off two frames, so it needs
-confirming across the corpus before anything is built on it — the cap field is
-not in the transcription, which is precisely the kind of gap this reader exists
-to close.
+- **The training preview gains** (`+23` and the rest). Segmentation on them is
+  proven; no templates are induced, because the transcription does not carry
+  them.
+- **The lesson/song board and the pre-run scan.** Neither is read at all.
+- **Why live capture reads worse than a dropped screenshot.** Simulated JPEG at
+  q85/q70/q55 and 4:2:0 chroma subsampling against the corpus does *not*
+  reproduce it, so the explanation is not compression and guessing further is
+  not worth it. The capture pane now has a "Save this frame" button; one saved
+  pair settles it with real bytes.

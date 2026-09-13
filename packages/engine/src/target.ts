@@ -293,6 +293,17 @@ export function wishlistSpCost(
  *
  * Falls back to the base only when nothing has been scanned yet, and the UI
  * should say so rather than presenting a guess as fact.
+ *
+ * THE SCANNED CAPS ARE NOT A ONE-TIME READING. This was written believing a cap
+ * was fixed for the length of a run, and it is not: reading the cap row on all
+ * 58 training frames of the captured career shows speed going 1625 -> 1630 ->
+ * 1635, stamina 1332 -> 1336 -> 1342, power 1332 -> 1337 -> 1343 and wit 1300
+ * -> 1304, each step landing on the first turn of a new year (guts did not move
+ * at all). What raises them is not known. This function does not care -- it
+ * takes whatever the caller last saw -- but the CALLER must keep re-reading
+ * rather than scanning once at Legacy Select, or it runs two thirds of the
+ * career against a cap that is 10 points low. See
+ * `examples/stat-caps-2026-09-05.json` and `tools/vision/caps-probe.ts`.
  */
 export function effectiveStatCaps(
   scenarioBase: StatVector,

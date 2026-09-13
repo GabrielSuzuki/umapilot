@@ -19,7 +19,7 @@ import { probeScreen, findPanel } from "../src/vision/classify";
 import { turnCandidates, resolveTurn, calendarFor } from "../src/vision/turn";
 import { readFrame } from "../src/vision/read";
 import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X, isPanelShaped, cropImage } from "../src/vision/layout";
-import { chipLevelField } from "../src/vision/fields";
+import { chipLevelField, capField, fieldGlyphs } from "../src/vision/fields";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -234,6 +234,36 @@ console.log("\nvision: finding the panel in a bigger capture");
     findPanel(solid(3840, 1080, 128, 128, 128)) === null,
     "the panel is located by the shape of the training screen, so a menu or a " +
     "race dialog has no good offset -- and the least-bad one is worse than none");
+}
+
+console.log("\nvision: the cap row");
+{
+  // The "/" is dropped by POSITION, not by cropping it out of the box: it is
+  // always the leftmost component and the box has to stay wide enough for a
+  // four-digit cap on a smaller panel.
+  const spec = capField(0);
+  check("the cap field drops exactly one leading component",
+    spec.dropLeading === 1 && spec.style === "capSmall",
+    "the slash would otherwise be matched as a digit");
+
+  check("the cap row has its own templates, not the stat values'",
+    (GLYPH_TEMPLATES.get("capSmall") ?? []).length > 0 &&
+    GLYPH_TEMPLATES.get("capSmall") !== GLYPH_TEMPLATES.get("bigDark"),
+    "cap digits are drawn at about half the height of the value digits; matched " +
+    "against bigDark they read 16 of 40 known caps, against their own 273 of 290");
+
+  // 8 and 9 never appear in a cap in the captured career, so they have no
+  // template and a cap containing one is REFUSED. Pinned because the failure
+  // mode that matters is a wrong cap, not a missing one -- and a missing one
+  // leaves the player's typed value standing.
+  const capDigits = (GLYPH_TEMPLATES.get("capSmall") ?? []).map((t) => t.label).sort().join("");
+  check("the cap templates cover only the digits the capture contained",
+    capDigits === "01234567",
+    `capSmall knows ${capDigits}; a cap with an 8 or 9 in it reads as nothing rather than as something else`);
+
+  check("a blank cap box reads nothing",
+    readNumber(fieldGlyphs(solid(REF_W, REF_H, 250, 250, 250), capField(2)),
+      GLYPH_TEMPLATES.get("capSmall") ?? []) === null);
 }
 
 console.log(failed === 0 ? "\nvision: all checks passed" : `\nvision: ${failed} FAILED`);
