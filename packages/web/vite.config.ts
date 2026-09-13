@@ -15,5 +15,19 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   server: { fs: { allow: [fileURLToPath(new URL("../..", import.meta.url))] } },
-  build: { target: "es2022", outDir: "dist" },
+  build: {
+    target: "es2022",
+    outDir: "dist",
+    // TWO entry points, declared. The dev server serves any .html it finds, so
+    // a second page works under `npm run web` whether or not it is listed here
+    // -- and then vanishes from `npm run web:build`, which only bundles what it
+    // is told about. That asymmetry is exactly the kind of thing that is
+    // discovered in production.
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL("index.html", import.meta.url)),
+        capture: fileURLToPath(new URL("capture.html", import.meta.url)),
+      },
+    },
+  },
 });

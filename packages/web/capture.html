@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>umapilot — live capture check</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main id="app" class="app">
+      <h1>Live capture check</h1>
+      <p class="sub">
+        Does the browser see the game? Share the Umamusume window and this reads it
+        live, ~2 frames a second. Nothing is recorded and nothing leaves the page.
+      </p>
+      <p><button id="start" class="go">Share the game window</button>
+         <button id="stop" class="go" hidden>Stop</button></p>
+      <div id="status"></div>
+      <div class="cols">
+        <div><section class="card"><h2>What it reads</h2><div id="read"></div></section></div>
+        <div><section class="card"><h2>The frame</h2><canvas id="preview"></canvas></section></div>
+      </div>
+    </main>
+    <script type="module" src="./src/capture.ts"></script>
+  </body>
+</html>

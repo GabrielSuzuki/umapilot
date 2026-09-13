@@ -88,3 +88,10 @@ details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size
 .drop.busy { opacity: 0.6; cursor: progress; }
 .scanok { font-size: 13px; margin: 8px 0 0; }
 .scanno { font-size: 13px; margin: 6px 0 0; color: #8a4b00; }
+
+.go {
+  font: inherit; padding: 8px 16px; border-radius: 8px;
+  border: 1px solid var(--line, #d7d7de); background: #fff; cursor: pointer;
+}
+.go:hover { background: #f4f4f7; }
+#preview { max-width: 100%; border-radius: 8px; background: #111; }
