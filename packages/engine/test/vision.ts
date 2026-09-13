@@ -15,9 +15,9 @@
 import { GLYPH_W, GLYPH_H, segmentGlyphs, readNumber, matchGlyph, MAX_GLYPH_DISTANCE } from "../src/vision/segment";
 import { GLYPH_TEMPLATES } from "../src/vision/glyphs";
 import { inkMask, whiteDistance, fractionOfMaxThreshold, lumaStdDev, type RgbaImage } from "../src/vision/image";
-import { probeScreen } from "../src/vision/classify";
+import { probeScreen, findPanel } from "../src/vision/classify";
 import { readFrame } from "../src/vision/read";
-import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X } from "../src/vision/layout";
+import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X, isPanelShaped, cropImage } from "../src/vision/layout";
 import { chipLevelField } from "../src/vision/fields";
 
 let failed = 0;
@@ -157,6 +157,36 @@ console.log("\nvision: classification and layout");
     chipLevelField(0, true).box.y0 < chipLevelField(0, false).box.y0,
     "the selected chip rides ~40px up; trying both offsets is how the reader " +
     "identifies WHICH facility is selected without reading a word");
+}
+
+console.log("\nvision: finding the panel in a bigger capture");
+{
+  check("a panel-shaped image is recognised without searching",
+    isPanelShaped(solid(REF_W, REF_H, 1, 2, 3)) &&
+    isPanelShaped(solid(REF_W * 2, REF_H * 2, 1, 2, 3)) &&
+    !isPanelShaped(solid(3840, 1080, 1, 2, 3)),
+    "getDisplayMedia captures the game WINDOW, so in production the frame is " +
+    "the panel; a PrtScn of the desktop is the case that needs searching");
+
+  const wide = solid(60, 20, 10, 20, 30);
+  for (let y = 0; y < 20; y++) {
+    for (let x = 30; x < 40; x++) {
+      const i = (y * 60 + x) * 4;
+      wide.data[i] = 200; wide.data[i + 1] = 210; wide.data[i + 2] = 220;
+    }
+  }
+  const c = cropImage(wide, { x0: 30, y0: 0, x1: 40, y1: 20 });
+  check("cropping takes the box and nothing else",
+    c.width === 10 && c.height === 20 && c.data[0] === 200 && c.data[2] === 220);
+
+  const exact = findPanel(solid(REF_W, REF_H, 128, 128, 128));
+  check("a panel-shaped frame is returned whole, unsearched",
+    !!exact && exact.exact && exact.box.x0 === 0 && exact.box.x1 === REF_W);
+
+  check("a frame with no training screen in it is refused, not approximated",
+    findPanel(solid(3840, 1080, 128, 128, 128)) === null,
+    "the panel is located by the shape of the training screen, so a menu or a " +
+    "race dialog has no good offset -- and the least-bad one is worse than none");
 }
 
 console.log(failed === 0 ? "\nvision: all checks passed" : `\nvision: ${failed} FAILED`);

@@ -19,6 +19,7 @@ import { EMPTY_TARGET, type RunTarget } from "../../engine/src/target";
 import type { GcRunState } from "../../engine/src/scenarios/grand-concert";
 import { loadDataset } from "./dataset";
 import { defaultSetup, makeScenario, editableFrom, applyEditable, type Editable } from "./run";
+import { imageFromFile, scanImage, applyScan, type ScanResult } from "./scan";
 
 const app = document.getElementById("app")!;
 const maybe = loadDataset();
@@ -35,6 +36,9 @@ let target: RunTarget = {
   ...EMPTY_TARGET,
   stats: { speed: 700, stamina: 300, power: 400, guts: 200, wit: 650 },
 };
+
+/** The last scan, so its result survives the re-render that follows it. */
+let lastScan: ScanResult | null = null;
 
 const num = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 const esc = (s: string) =>
@@ -109,6 +113,14 @@ function render(r: PlanResult, state: GcRunState, ms: number) {
     ${unreachable ? `<div class="banner">${esc(unreachable)}</div>` : ""}
     <div class="cols">
       <div>
+        <section class="card">
+          <h2>Read a screenshot</h2>
+          <div id="drop" class="drop" tabindex="0">
+            Drop a shot of the turn screen here, or click to choose one.
+            <input id="file" type="file" accept="image/*" hidden />
+          </div>
+          <div id="scanout">${scanSummary()}</div>
+        </section>
         <section class="card"><h2>This turn</h2><div id="editor"></div></section>
       </div>
       <div>
@@ -144,6 +156,65 @@ function render(r: PlanResult, state: GcRunState, ms: number) {
       </div>
     </div>`;
   mountEditor();
+  mountDrop();
+}
+
+/**
+ * What the scan found, and -- the part that matters -- what it did not.
+ *
+ * The reader reads 72% of fields and misreads none of them, so a scan is never
+ * "your state is now correct". Listing the refusals by name is what makes the
+ * remaining 28% visible work rather than an invisible gap: a field that was
+ * left alone looks exactly like a field that was confirmed unless something
+ * says otherwise.
+ */
+function scanSummary(): string {
+  if (!lastScan) return "";
+  if (!lastScan.ok) return `<p class="banner">${esc(lastScan.problem ?? "could not read that image")}</p>`;
+  const lv = lastScan.facilityLevels ?? {};
+  const levels = STATS.filter((s) => lv[s] !== undefined).map((s) => `${s} ${lv[s]}`);
+  return `
+    <p class="note">Read in ${lastScan.ms.toFixed(0)} ms.</p>
+    <p class="scanok"><strong>Took from the frame:</strong> ${esc(lastScan.filled.join(", ") || "nothing")}</p>
+    ${lastScan.refused.length ? `<p class="scanno"><strong>Could not read, so left alone:</strong>
+      ${esc(lastScan.refused.join(", "))}. These are refusals, not guesses — check them yourself.</p>` : ""}
+    ${levels.length ? `<p class="note">Facility levels on screen: ${esc(levels.join(" · "))}.
+      Not applied — levels belong to the run setup, not to this turn.</p>` : ""}
+    ${lastScan.reading?.chipLevelsHidden ? `<p class="note">No chip printed a level, which is what
+      summer camp looks like: the game hides them and shows Lvl 5 on the banner regardless of the
+      real level. Nothing was read from that banner.</p>` : ""}`;
+}
+
+function mountDrop(): void {
+  const zone = document.getElementById("drop");
+  const input = document.getElementById("file") as HTMLInputElement | null;
+  if (!zone || !input) return;
+
+  const handle = async (file: File | undefined) => {
+    if (!file) return;
+    zone.classList.add("busy");
+    try {
+      const img = await imageFromFile(file);
+      lastScan = scanImage(img);
+      if (lastScan.ok && lastScan.reading) edit = applyScan(edit, lastScan.reading);
+    } catch (e) {
+      lastScan = { ok: false, problem: `could not decode that file: ${String(e)}`, filled: [], refused: [], ms: 0 };
+    } finally {
+      zone.classList.remove("busy");
+    }
+    recompute();
+  };
+
+  zone.addEventListener("click", () => input.click());
+  zone.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") input.click(); });
+  input.addEventListener("change", () => void handle(input.files?.[0]));
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("over");
+    void handle((e as DragEvent).dataTransfer?.files?.[0]);
+  });
 }
 
 function field(label: string, value: number, on: (v: number) => void, min = 0, max = 9999) {

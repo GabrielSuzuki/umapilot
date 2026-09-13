@@ -11,7 +11,7 @@
  * a panel whose aspect differs from the reference means the panel was found
  * wrongly, and `panelFromFrame` says so rather than scaling anyway.
  */
-import type { Box, RgbaImage } from "./image";
+import { clampBox, type Box, type RgbaImage } from "./image";
 
 export const REF_W = 812;
 export const REF_H = 1080;
@@ -129,26 +129,32 @@ export function tokenValueBox(i: number): RefBox {
 }
 
 /**
- * Find the game panel inside an arbitrary capture.
+ * Crop an image to a sub-box without copying more than the box.
  *
- * The reference corpus is a 3840x1080 dual-monitor grab with the game in a
- * fixed 812-wide column, and hardcoding that crop is exactly the sort of thing
- * that works on 86 files and on nobody's machine. So: scan for the widest
- * column band whose aspect ratio matches the reference once the letterboxing
- * is removed.
- *
- * Returns null rather than guessing when nothing matches, because a wrong panel
- * produces confident readings of the wrong pixels, which is worse than no
- * reading at all.
+ * The reader works in panel coordinates, so once the panel is located
+ * everything downstream is simpler if it is handed an image that IS the panel.
  */
-export function panelFromFrame(img: RgbaImage, tolerance = 0.02): Box | null {
-  // The common case, and worth taking first: the frame IS the panel.
-  const whole = img.width / img.height;
-  if (Math.abs(whole - REF_ASPECT) / REF_ASPECT <= tolerance) {
-    return { x0: 0, y0: 0, x1: img.width, y1: img.height };
+export function cropImage(img: RgbaImage, box: Box): RgbaImage {
+  const b = clampBox(box, img.width, img.height);
+  const w = Math.max(0, b.x1 - b.x0), h = Math.max(0, b.y1 - b.y0);
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const src = ((b.y0 + y) * img.width + b.x0) * 4;
+    data.set(img.data.subarray(src, src + w * 4), y * w * 4);
   }
-  // Otherwise assume full height and slide a window of the right width.
-  const w = Math.round(img.height * REF_ASPECT);
-  if (w > img.width) return null;
-  return { x0: 0, y0: 0, x1: w, y1: img.height };
+  return { width: w, height: h, data };
+}
+
+/**
+ * Is this image already the game panel?
+ *
+ * In production it will be: `getDisplayMedia` captures the game WINDOW, so the
+ * frame and the panel are the same thing. The corpus is the other case -- a
+ * 3840x1080 dual-monitor grab with the game in a column -- and that is not an
+ * artefact of how these screenshots were taken. It is what a player gets from
+ * PrtScn, which is exactly how they will produce a file to drop on the page.
+ */
+export function isPanelShaped(img: RgbaImage, tolerance = 0.02): boolean {
+  const a = img.width / img.height;
+  return Math.abs(a - REF_ASPECT) / REF_ASPECT <= tolerance;
 }

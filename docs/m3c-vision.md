@@ -139,14 +139,73 @@ using only machinery that already exists — no letter templates, and no colour
 heuristic that a re-skin would break. Two raised chips is a contradiction and is
 reported as no reading rather than as the first one found.
 
+## Finding the panel in a desktop screenshot
+
+`x = 2068` was hardcoded in every tool written against these images. It had to
+stop being hardcoded, because the file a player drops on the page is a PrtScn
+of whatever their desktop looked like.
+
+The game letterboxes rather than reflowing, so the panel's aspect is fixed and
+the only unknown is where it starts. Two stages, because neither works alone:
+
+**The probes cannot localise.** `statRowLuma` and friends are aggregate
+statistics over large boxes, so sliding the window 30px barely moves them.
+Scored alone they land 15 to 250 pixels off, and every field read then fails
+against a layout that is almost right.
+
+**The stat row can.** It is a bright panel with hard outer borders and four
+dashed cell dividers at known spacing — seven edges at fixed offsets. Correlating
+that comb against the image's column-wise edge energy gives a peak one pixel
+wide: **16778 at the true offset against 6413 eight pixels away.**
+
+**But the comb discriminates badly.** On one frame its runner-up sits 287px from
+the truth at 96% of the score, and a fine pass anchored to a single coarse guess
+follows that guess off a cliff — which is exactly what happened on frame 30. So
+the coarse pass keeps five separated minima, the comb refines each, and the
+probes choose between the refined offsets.
+
+On 12 full 3840×1080 frames: **9 of 9 training frames located** (7 exact, 2 at
+−1px, all reading fields correctly), and 2 of 3 non-training frames correctly
+refused, in ~350ms each.
+
+The third is the thin band again. The Hype Level panel is accepted at an offset
+188px off, because at that crop its probes land inside the training bands. It
+then reads no fields at all, so it surfaces as "found the game, could not read
+anything" rather than as wrong state — but it is the same 2.3-unit margin, and
+reading the screen-name tab would close it.
+
+There is a limit worth stating rather than discovering: the probes describe a
+*training* screen, so this finds the panel only in a frame that contains one.
+A screenshot of a race dialog has no good offset and the search returns null.
+That is right for the drop-a-screenshot flow, where a training screen is the
+only thing worth reading — but it is not a general window finder.
+
+## Drop a screenshot (`packages/web/src/scan.ts`)
+
+Drop a PrtScn on the page: it finds the panel, classifies, reads what it can,
+and fills the fields in. No permission prompt, no capture loop, nothing
+uploaded — `createImageBitmap` into an `OffscreenCanvas` hands the reader the
+same `ImageData` a capture loop would, and the file never leaves the page.
+
+**What it refuses is the feature.** A scan is not "here is your state"; it is
+"here is what I could actually see". Refused fields are left exactly as they
+were and listed by name, because a field left alone looks identical to a field
+confirmed unless something says otherwise.
+
+Two things it deliberately does not do:
+
+- **`turnsLeft` is not written to `turn`.** The screen counts turns until the
+  next goal, not turns elapsed in the career. They look alike and are different
+  numbers, and writing one into the other is precisely the silent plausible
+  wrong answer the refusals exist to prevent.
+- **Facility levels are read but not applied.** They belong to the run setup,
+  not to this turn. They are shown so the player can see they were read.
+
 ## Not done
 
 - **Layer 3, the `getDisplayMedia` capture loop.** Only the player can test it.
-- **Panel detection in an arbitrary frame.** In production the capture is the
-  game window, so the frame *is* the panel and `panelFromFrame` handles that.
-  The corpus is a 3840×1080 dual-monitor grab with the game in a fixed column,
-  and the harness passes that crop explicitly rather than pretending to detect
-  it.
+  The drop path exists partly to de-risk it: a reader bug found here is not
+  tangled up with a capture bug.
 - **Text.** The calendar string, the goal, the facility name on the banner, and
   the screen tab are all unread. Letters need letter templates, and the corpus
   labels numbers.

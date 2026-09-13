@@ -72,3 +72,19 @@ details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size
 .goal { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
 .goal .k { color: var(--muted); font-size: 13px; }
 .goal strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+
+/* The screenshot drop zone. Deliberately plain: it is a file input, and the
+   interesting output is the list of what could NOT be read, below it. */
+.drop {
+  border: 2px dashed var(--line, #d7d7de);
+  border-radius: 10px;
+  padding: 22px 14px;
+  text-align: center;
+  color: #666;
+  cursor: pointer;
+  font-size: 13px;
+}
+.drop.over { border-color: #4a7; background: #f2fbf6; }
+.drop.busy { opacity: 0.6; cursor: progress; }
+.scanok { font-size: 13px; margin: 8px 0 0; }
+.scanno { font-size: 13px; margin: 6px 0 0; color: #8a4b00; }
