@@ -20,11 +20,15 @@ import type { GcRunState } from "../../engine/src/scenarios/grand-concert";
 import { loadDataset } from "./dataset";
 import { defaultSetup, makeScenario, editableFrom, applyEditable, type Editable } from "./run";
 import { imageFromFile, scanImage, applyScan, type ScanResult } from "./scan";
+import { mountCapture } from "./capture";
+import type { FrameReading } from "../../engine/src/vision/read";
 
 const app = document.getElementById("app")!;
+const paneAdvice = document.getElementById("pane-advice")!;
+const paneCapture = document.getElementById("pane-capture")!;
 const maybe = loadDataset();
 if ("error" in maybe) {
-  app.innerHTML = `<div class="err"><strong>No dataset.</strong><br>${maybe.error}</div>`;
+  paneAdvice.innerHTML = `<div class="err"><strong>No dataset.</strong><br>${maybe.error}</div>`;
   throw new Error(maybe.error);
 }
 const loaded = maybe;
@@ -107,8 +111,7 @@ function render(r: PlanResult, state: GcRunState, ms: number) {
        That is the honest answer rather than a gap: buying the techniques in front of
        you is also how the next song board is drawn.</p>`;
 
-  app.innerHTML = `
-    <h1>umapilot</h1>
+  paneAdvice.innerHTML = `
     <p class="sub">Turn ${state.turn} of ${scenario.careerTurns} · dataset ${loaded.sha} · advice in ${ms} ms</p>
     ${unreachable ? `<div class="banner">${esc(unreachable)}</div>` : ""}
     <div class="cols">
@@ -202,7 +205,59 @@ function mountDrop(): void {
     } finally {
       zone.classList.remove("busy");
     }
-    recompute();
+    /**
+ * Tabs, and why the capture pane is mounted once and merely hidden.
+ *
+ * `render()` rewrites the advice pane on every recompute. The capture pane owns
+ * a live MediaStream, a video element and a canvas, so rebuilding it would drop
+ * the stream -- and re-acquiring one costs the player another permission
+ * prompt. So the two panes are siblings, the advice pane is the only thing
+ * re-rendered, and switching tabs toggles `hidden` and nothing else. The
+ * capture loop keeps running while the player reads the advice, which is the
+ * behaviour you want anyway: the game does not pause to be looked at.
+ */
+const tabs = document.getElementById("tabs")!;
+tabs.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".tab");
+  if (!btn) return;
+  const want = btn.dataset.pane;
+  for (const t of tabs.querySelectorAll<HTMLButtonElement>(".tab")) {
+    t.classList.toggle("on", t === btn);
+  }
+  paneAdvice.hidden = want !== "advice";
+  paneCapture.hidden = want !== "capture";
+});
+
+/**
+ * What the capture pane hands back.
+ *
+ * Only the fields the reader actually read: `applyScan` leaves everything else
+ * alone, so a frame it could not fully read does not blank the numbers the
+ * player typed. Facility levels are read but deliberately not applied -- they
+ * belong to the run setup rather than to this turn.
+ */
+function applyFromCapture(r: FrameReading): void {
+  edit = applyScan(edit, r);
+  lastScan = {
+    ok: true,
+    filled: [
+      ...(r.skillPts !== undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] !== undefined),
+    ],
+    refused: [
+      ...(r.skillPts === undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] === undefined),
+    ],
+    ms: 0,
+    reading: r,
+  };
+  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
+  recompute();
+}
+
+mountCapture(paneCapture, applyFromCapture);
+
+recompute();
   };
 
   zone.addEventListener("click", () => input.click());
@@ -233,7 +288,59 @@ function mountEditor() {
   const g = document.createElement("div");
   g.className = "grid";
   const add = (l: string, v: number, on: (n: number) => void, min = 0, max = 9999) => {
-    const [a, b] = field(l, v, (n) => { on(n); recompute(); }, min, max);
+    const [a, b] = field(l, v, (n) => { on(n); /**
+ * Tabs, and why the capture pane is mounted once and merely hidden.
+ *
+ * `render()` rewrites the advice pane on every recompute. The capture pane owns
+ * a live MediaStream, a video element and a canvas, so rebuilding it would drop
+ * the stream -- and re-acquiring one costs the player another permission
+ * prompt. So the two panes are siblings, the advice pane is the only thing
+ * re-rendered, and switching tabs toggles `hidden` and nothing else. The
+ * capture loop keeps running while the player reads the advice, which is the
+ * behaviour you want anyway: the game does not pause to be looked at.
+ */
+const tabs = document.getElementById("tabs")!;
+tabs.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".tab");
+  if (!btn) return;
+  const want = btn.dataset.pane;
+  for (const t of tabs.querySelectorAll<HTMLButtonElement>(".tab")) {
+    t.classList.toggle("on", t === btn);
+  }
+  paneAdvice.hidden = want !== "advice";
+  paneCapture.hidden = want !== "capture";
+});
+
+/**
+ * What the capture pane hands back.
+ *
+ * Only the fields the reader actually read: `applyScan` leaves everything else
+ * alone, so a frame it could not fully read does not blank the numbers the
+ * player typed. Facility levels are read but deliberately not applied -- they
+ * belong to the run setup rather than to this turn.
+ */
+function applyFromCapture(r: FrameReading): void {
+  edit = applyScan(edit, r);
+  lastScan = {
+    ok: true,
+    filled: [
+      ...(r.skillPts !== undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] !== undefined),
+    ],
+    refused: [
+      ...(r.skillPts === undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] === undefined),
+    ],
+    ms: 0,
+    reading: r,
+  };
+  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
+  recompute();
+}
+
+mountCapture(paneCapture, applyFromCapture);
+
+recompute(); }, min, max);
     g.append(a, b);
   };
   add("Turn", edit.turn, (n) => (edit.turn = n), 1, scenario.careerTurns);
@@ -275,5 +382,57 @@ function recompute() {
     app.classList.remove("busy");
   });
 }
+
+/**
+ * Tabs, and why the capture pane is mounted once and merely hidden.
+ *
+ * `render()` rewrites the advice pane on every recompute. The capture pane owns
+ * a live MediaStream, a video element and a canvas, so rebuilding it would drop
+ * the stream -- and re-acquiring one costs the player another permission
+ * prompt. So the two panes are siblings, the advice pane is the only thing
+ * re-rendered, and switching tabs toggles `hidden` and nothing else. The
+ * capture loop keeps running while the player reads the advice, which is the
+ * behaviour you want anyway: the game does not pause to be looked at.
+ */
+const tabs = document.getElementById("tabs")!;
+tabs.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".tab");
+  if (!btn) return;
+  const want = btn.dataset.pane;
+  for (const t of tabs.querySelectorAll<HTMLButtonElement>(".tab")) {
+    t.classList.toggle("on", t === btn);
+  }
+  paneAdvice.hidden = want !== "advice";
+  paneCapture.hidden = want !== "capture";
+});
+
+/**
+ * What the capture pane hands back.
+ *
+ * Only the fields the reader actually read: `applyScan` leaves everything else
+ * alone, so a frame it could not fully read does not blank the numbers the
+ * player typed. Facility levels are read but deliberately not applied -- they
+ * belong to the run setup rather than to this turn.
+ */
+function applyFromCapture(r: FrameReading): void {
+  edit = applyScan(edit, r);
+  lastScan = {
+    ok: true,
+    filled: [
+      ...(r.skillPts !== undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] !== undefined),
+    ],
+    refused: [
+      ...(r.skillPts === undefined ? ["skill points"] : []),
+      ...STATS.filter((s) => r.stats[s] === undefined),
+    ],
+    ms: 0,
+    reading: r,
+  };
+  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
+  recompute();
+}
+
+mountCapture(paneCapture, applyFromCapture);
 
 recompute();
