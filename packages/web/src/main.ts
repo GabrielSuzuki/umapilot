@@ -205,59 +205,7 @@ function mountDrop(): void {
     } finally {
       zone.classList.remove("busy");
     }
-    /**
- * Tabs, and why the capture pane is mounted once and merely hidden.
- *
- * `render()` rewrites the advice pane on every recompute. The capture pane owns
- * a live MediaStream, a video element and a canvas, so rebuilding it would drop
- * the stream -- and re-acquiring one costs the player another permission
- * prompt. So the two panes are siblings, the advice pane is the only thing
- * re-rendered, and switching tabs toggles `hidden` and nothing else. The
- * capture loop keeps running while the player reads the advice, which is the
- * behaviour you want anyway: the game does not pause to be looked at.
- */
-const tabs = document.getElementById("tabs")!;
-tabs.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".tab");
-  if (!btn) return;
-  const want = btn.dataset.pane;
-  for (const t of tabs.querySelectorAll<HTMLButtonElement>(".tab")) {
-    t.classList.toggle("on", t === btn);
-  }
-  paneAdvice.hidden = want !== "advice";
-  paneCapture.hidden = want !== "capture";
-});
-
-/**
- * What the capture pane hands back.
- *
- * Only the fields the reader actually read: `applyScan` leaves everything else
- * alone, so a frame it could not fully read does not blank the numbers the
- * player typed. Facility levels are read but deliberately not applied -- they
- * belong to the run setup rather than to this turn.
- */
-function applyFromCapture(r: FrameReading): void {
-  edit = applyScan(edit, r);
-  lastScan = {
-    ok: true,
-    filled: [
-      ...(r.skillPts !== undefined ? ["skill points"] : []),
-      ...STATS.filter((s) => r.stats[s] !== undefined),
-    ],
-    refused: [
-      ...(r.skillPts === undefined ? ["skill points"] : []),
-      ...STATS.filter((s) => r.stats[s] === undefined),
-    ],
-    ms: 0,
-    reading: r,
-  };
-  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
-  recompute();
-}
-
-mountCapture(paneCapture, applyFromCapture);
-
-recompute();
+    recompute();
   };
 
   zone.addEventListener("click", () => input.click());
@@ -288,59 +236,7 @@ function mountEditor() {
   const g = document.createElement("div");
   g.className = "grid";
   const add = (l: string, v: number, on: (n: number) => void, min = 0, max = 9999) => {
-    const [a, b] = field(l, v, (n) => { on(n); /**
- * Tabs, and why the capture pane is mounted once and merely hidden.
- *
- * `render()` rewrites the advice pane on every recompute. The capture pane owns
- * a live MediaStream, a video element and a canvas, so rebuilding it would drop
- * the stream -- and re-acquiring one costs the player another permission
- * prompt. So the two panes are siblings, the advice pane is the only thing
- * re-rendered, and switching tabs toggles `hidden` and nothing else. The
- * capture loop keeps running while the player reads the advice, which is the
- * behaviour you want anyway: the game does not pause to be looked at.
- */
-const tabs = document.getElementById("tabs")!;
-tabs.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".tab");
-  if (!btn) return;
-  const want = btn.dataset.pane;
-  for (const t of tabs.querySelectorAll<HTMLButtonElement>(".tab")) {
-    t.classList.toggle("on", t === btn);
-  }
-  paneAdvice.hidden = want !== "advice";
-  paneCapture.hidden = want !== "capture";
-});
-
-/**
- * What the capture pane hands back.
- *
- * Only the fields the reader actually read: `applyScan` leaves everything else
- * alone, so a frame it could not fully read does not blank the numbers the
- * player typed. Facility levels are read but deliberately not applied -- they
- * belong to the run setup rather than to this turn.
- */
-function applyFromCapture(r: FrameReading): void {
-  edit = applyScan(edit, r);
-  lastScan = {
-    ok: true,
-    filled: [
-      ...(r.skillPts !== undefined ? ["skill points"] : []),
-      ...STATS.filter((s) => r.stats[s] !== undefined),
-    ],
-    refused: [
-      ...(r.skillPts === undefined ? ["skill points"] : []),
-      ...STATS.filter((s) => r.stats[s] === undefined),
-    ],
-    ms: 0,
-    reading: r,
-  };
-  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
-  recompute();
-}
-
-mountCapture(paneCapture, applyFromCapture);
-
-recompute(); }, min, max);
+    const [a, b] = field(l, v, (n) => { on(n); recompute(); }, min, max);
     g.append(a, b);
   };
   add("Turn", edit.turn, (n) => (edit.turn = n), 1, scenario.careerTurns);

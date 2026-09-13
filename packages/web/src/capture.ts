@@ -26,10 +26,29 @@ export interface CaptureHandle {
   stop(): void;
 }
 
+/**
+ * Mounted panes, so a second call cannot destroy a live stream.
+ *
+ * This is a guard against a specific mistake that already happened: a
+ * search-and-replace put `mountCapture` inside an editor field's change
+ * handler, so every keystroke in the advice pane rebuilt this one and dropped
+ * the capture. It type-checked, because a nested function call and a
+ * re-registered listener are both perfectly legal -- the damage was only
+ * visible as "the recording UI goes back to its original state".
+ *
+ * Making a second mount a no-op rather than a teardown means the failure mode
+ * is now a missing update rather than a lost permission grant. Cheap, and it
+ * turns an invisible bug into an inert one.
+ */
+const mounted = new WeakMap<HTMLElement, CaptureHandle>();
+
 export function mountCapture(
   host: HTMLElement,
   onApply: (reading: FrameReading) => void,
 ): CaptureHandle {
+  const already = mounted.get(host);
+  if (already) return already;
+
   host.innerHTML = `
     <p class="sub">
       Share the Umamusume window and this reads it live, about twice a second.
@@ -212,5 +231,7 @@ export function mountCapture(
   stopBtn.addEventListener("click", () => stop());
   applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading); });
 
-  return { stop };
+  const handle: CaptureHandle = { stop };
+  mounted.set(host, handle);
+  return handle;
 }
