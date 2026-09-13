@@ -64,6 +64,7 @@ export function mountCapture(
       <button id="cap-start" class="go">Share the game window</button>
       <button id="cap-stop" class="go" hidden>Stop</button>
       <button id="cap-apply" class="go" hidden>Use this state in Turn advice</button>
+      <button id="cap-save" class="go" hidden>Save this frame</button>
       <label class="inline"><input type="checkbox" id="cap-auto" checked />
         keep Turn advice in sync</label>
     </p>
@@ -82,6 +83,9 @@ export function mountCapture(
   const preview = host.querySelector<HTMLCanvasElement>("#cap-preview")!;
   const autoBox = host.querySelector<HTMLInputElement>("#cap-auto")!;
   const turnEl = host.querySelector<HTMLElement>("#cap-turn")!;
+  const saveBtn = host.querySelector<HTMLButtonElement>("#cap-save")!;
+  /** Whether `work` currently holds a frame worth saving. */
+  let lastFrame = false;
 
   /** What was last pushed to the planner, and when -- see the sync rule below. */
   let lastSyncSig = "";
@@ -191,6 +195,7 @@ export function mountCapture(
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
     startBtn.hidden = false; stopBtn.hidden = true; applyBtn.hidden = true;
+    saveBtn.hidden = true; lastFrame = false;
   }
 
   async function tick(): Promise<void> {
@@ -203,6 +208,7 @@ export function mountCapture(
     if (!ctx) { statusEl.innerHTML = `<div class="banner">No 2d canvas context.</div>`; return; }
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
+    lastFrame = true; saveBtn.hidden = false;
 
     // A capture that is not working is uniformly black; a dark game scene has
     // variation. Checking brightness alone would confuse the two, which are
@@ -328,27 +334,81 @@ export function mountCapture(
         ${esc(calendarFor(knownTurn))}, ${72 - knownTurn} turns left in the career.</p>`;
       return;
     }
-    if (r.concertIn === undefined) {
-      turnEl.innerHTML = `<p class="note">Waiting to read the concert countdown, which is
-        what places the career turn.</p>`;
-      return;
-    }
-    const opts = turnCandidates(r.concertIn)
+    // ALWAYS OFFER A WAY IN. The countdown is refused on plenty of frames, and
+    // the first version of this left the player staring at "waiting to read the
+    // concert countdown" with nothing to click -- blocked by a field they can
+    // see perfectly well themselves. The candidates narrow the choice when the
+    // countdown is readable; the full list is there when it is not.
+    const cands = r.concertIn === undefined ? [] : turnCandidates(r.concertIn);
+    const opts = (cands.length ? cands : [])
       .map((t) => `<button class="go pick" data-turn="${t}">${esc(calendarFor(t))}</button>`)
       .join(" ");
+    const all = Array.from({ length: 72 }, (_, i) => i + 1)
+      .map((t) => `<option value="${t}">${t} — ${esc(calendarFor(t))}</option>`).join("");
     turnEl.innerHTML = `<div class="banner">
-      <strong>Which of these is on your screen?</strong>
-      The concert is ${r.concertIn} turns away, and that is true on five different turns.
-      One click and the career is tracked from here on.<br>${opts}</div>`;
+      <strong>Which turn are you on?</strong>
+      ${cands.length
+        ? `The concert is ${r.concertIn} turns away, which is true on ${cands.length} turns.`
+        : `The concert countdown was not readable on this frame, so pick it yourself.`}
+      One answer and the career is tracked from here on.
+      ${opts ? `<br>${opts}` : ""}
+      <br><label class="inline">or choose:
+        <select id="cap-turnpick"><option value="">—</option>${all}</select></label>
+    </div>`;
   }
 
+  const setTurn = (t: number): void => {
+    knownTurn = t;
+    if (lastReading) { renderTurn(lastReading); onApply(lastReading, knownTurn, false); }
+  };
   turnEl.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".pick");
-    if (!b) return;
-    knownTurn = Number(b.dataset.turn);
-    if (lastReading) { renderTurn(lastReading); onApply(lastReading, knownTurn, false); }
+    if (b) setTurn(Number(b.dataset.turn));
+  });
+  turnEl.addEventListener("change", (e) => {
+    const sel = e.target as HTMLSelectElement;
+    if (sel.id === "cap-turnpick" && sel.value) setTurn(Number(sel.value));
   });
 
+  /**
+   * Save the exact bytes the reader just saw.
+   *
+   * Everything about this module was built and calibrated against lossless
+   * PNGs, and the live path has behaved differently in ways I have not been
+   * able to reproduce offline -- JPEG artefacts and 4:2:0 chroma subsampling
+   * were both simulated against the corpus and neither accounts for it. Rather
+   * than keep guessing at what a captured frame looks like, this writes one
+   * out: the full frame, and the cropped panel exactly as `readFrame` received
+   * it, so the two can be compared against the same code.
+   *
+   * Nothing is uploaded. It is a download, to the player's own disk.
+   */
+  function saveFrame(): void {
+    if (!lastFrame) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const put = (canvas: HTMLCanvasElement, name: string) => {
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+      }, "image/png");
+    };
+    put(work, `umapilot-frame-${stamp}.png`);
+    if (locked) {
+      const c = document.createElement("canvas");
+      c.width = locked.x1 - locked.x0; c.height = locked.y1 - locked.y0;
+      const cc = c.getContext("2d");
+      if (cc) {
+        cc.drawImage(work, locked.x0, locked.y0, c.width, c.height, 0, 0, c.width, c.height);
+        put(c, `umapilot-panel-${stamp}.png`);
+      }
+    }
+  }
+
+  saveBtn.addEventListener("click", saveFrame);
   startBtn.addEventListener("click", () => void start());
   stopBtn.addEventListener("click", () => stop());
   applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading, knownTurn, true); });

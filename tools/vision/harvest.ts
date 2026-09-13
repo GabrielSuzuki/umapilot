@@ -20,7 +20,7 @@ export function tasksFor(label: Label): Task[] {
   if (typeof label.skillPts === "number") out.push({ field: "skillPts", spec: FIELDS.skillPts, value: label.skillPts });
   if (label.stats) {
     for (let i = 0; i < 5; i++) {
-      const v = label.stats[STATS[i]!];
+      const v = label.stats[i];
       if (typeof v === "number") out.push({ field: `stat:${STATS[i]}`, spec: statField(i), value: v });
     }
   }

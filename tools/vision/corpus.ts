@@ -31,7 +31,16 @@ export interface Label {
   selected?: string | null;
   selectedLevel?: number;
   levels?: number[];
-  stats?: Record<string, number>;
+  /**
+   * Final stats as an ARRAY in STATS order, not an object.
+   *
+   * Spelled out because reading it as `Record<string, number>` cost the project
+   * every stat measurement it thought it had: `label.stats["speed"]` on an array
+   * is undefined, silently, so 140 labelled values never reached the templates
+   * and never appeared in an accuracy table. The totals still added up, because
+   * they were adding up the fields that did work.
+   */
+  stats?: number[];
   skillPts?: number;
   summerCamp?: boolean;
   action?: string;
