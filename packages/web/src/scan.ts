@@ -7,8 +7,9 @@
  * having on its own: drop a PrtScn on the page and the fields fill in.
  *
  * WHAT IT REFUSES IS THE FEATURE. The reader returns a number only when every
- * glyph was unambiguous -- 72% of fields on held-out frames, and none of them
- * misread. So a scan is not "here is your state"; it is "here is what I could
+ * glyph was unambiguous -- 77% of 916 cross-validated fields, with one wrong
+ * (a chip level with a sparkle sitting on it). So a scan is not "here is your
+ * state"; it is "here is what I could
  * actually see, and here is what you still have to check". A field the reader
  * declined is left exactly as it was and is listed by name.
  */
@@ -75,6 +76,11 @@ export function scanImage(img: RgbaImage): ScanResult {
   note("concert countdown", reading.concertIn !== undefined);
   note("skill points", reading.skillPts !== undefined);
   for (const s of STATS) note(s, reading.stats[s] !== undefined);
+  // The caps are reported as ONE field rather than five, because the player
+  // does not act on them individually -- they are pushed into the run setup,
+  // and what he needs to know is whether this frame had anything to say about
+  // them at all.
+  note("stat caps", Object.keys(reading.statCaps).length > 0);
   note("selected facility", reading.selected !== undefined);
 
   return {

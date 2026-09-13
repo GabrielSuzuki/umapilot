@@ -339,9 +339,37 @@ and the player's typed value stands. A second captured career would close that.
   neither could be scored and neither was written.
 - **The token column.** Positions are in `layout.ts`; the transcription carries
   no token counts, so there is nothing to validate against.
-- **The training preview gains** (`+23` and the rest). Segmentation on them is
-  proven; no templates are induced, because the transcription does not carry
-  them.
+- **The training preview gains** (`+26` and the rest) — **investigated and not
+  shipped.** These are the numbers most worth having: they are what the game
+  itself predicts a click will pay, so reading them would turn every turn into a
+  ground-truth check on the training formula, and they are what the player's
+  click-through turn log would actually record.
+
+  What was established: the gain row sits at reference y 650–697, one number per
+  stat cell plus the Skill Pts cell, and **a cell with no gain has no warm ink at
+  all** — stamina, guts and wit come back empty on a speed training, so *which*
+  stats a click pays is readable even when the numbers are not.
+
+  Why it is not shipped: unlike every other field on this screen, these digits
+  are drawn **over the character art**, not over a panel. The fill is a vertical
+  gradient (roughly 252,224,141 at the top to 252,109,75 at the bottom) with a
+  white outline, and the frame behind it is whatever the uma is wearing — in the
+  captured career, a dark red jacket at 136,18,4x. A warm-colour key tuned to
+  that separates cleanly and returns **outlines only**, because the gradient
+  interior falls outside any threshold narrow enough to exclude the jacket. A
+  key wide enough to fill the digits takes the background with it.
+
+  So a reader tuned here would be tuned to one uma, one outfit and one
+  background, and the corpus cannot show otherwise: it is one character in one
+  scenario. That is the same trap the single held-out split set, one level up.
+  **What it needs is a second captured career with a different uma**, not more
+  threshold tuning.
+
+  There is an anchor waiting when it is built: six pairs of consecutive
+  transcribed frames give the exact gain vector the preview must have shown
+  (f44→f45 is speed +33 / power +27; f54→f55 is +23 / +16; f55→f56 is +38 /
+  +16), so a gain reader can be scored against numbers nobody read off the gain
+  row.
 - **The lesson/song board and the pre-run scan.** Neither is read at all.
 - **Why live capture reads worse than a dropped screenshot.** Simulated JPEG at
   q85/q70/q55 and 4:2:0 chroma subsampling against the corpus does *not*

@@ -57,6 +57,15 @@ let target: RunTarget = {
 /** The last scan, so its result survives the re-render that follows it. */
 let lastScan: ScanResult | null = null;
 
+/**
+ * The setup pane, held because BOTH ways into this app have caps to offer it.
+ *
+ * Declared up here rather than beside `mountSetup` because the drop handler and
+ * the capture callback are both written before the pane is mounted, and both
+ * push caps into it at runtime.
+ */
+let setupPane: SetupPane | null = null;
+
 const num = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 const esc = (s: string) =>
   s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
@@ -212,7 +221,13 @@ function mountDrop(): void {
     try {
       const img = await imageFromFile(file);
       lastScan = scanImage(img);
-      if (lastScan.ok && lastScan.reading) edit = applyScan(edit, lastScan.reading);
+      if (lastScan.ok && lastScan.reading) {
+        edit = applyScan(edit, lastScan.reading);
+        // A dropped screenshot carries the caps as surely as a live frame does,
+        // and the caps move mid-run -- so the drop path offers them too rather
+        // than leaving one of the two ways into this app on a stale ceiling.
+        setupPane?.setCaps(lastScan.reading.statCaps);
+      }
     } catch (e) {
       lastScan = { ok: false, problem: `could not decode that file: ${String(e)}`, filled: [], refused: [], ms: 0 };
     } finally {
@@ -328,8 +343,6 @@ tabs.addEventListener("click", (e) => {
  * player typed. Facility levels are read but deliberately not applied -- they
  * belong to the run setup rather than to this turn.
  */
-let setupPane: SetupPane | null = null;
-
 function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean): void {
   edit = applyScan(edit, r);
   // THE CAPS ARE NOT CONSTANT. They were treated as a per-run number read once
