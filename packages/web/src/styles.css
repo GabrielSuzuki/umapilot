@@ -105,3 +105,4 @@ details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size
 .tab:hover { color: inherit; }
 .inline { font-size: 13px; color: #555; margin-left: 10px; }
 .inline input { margin-right: 5px; }
+.pick { margin: 6px 6px 0 0; font-size: 13px; padding: 5px 10px; }

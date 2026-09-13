@@ -16,6 +16,7 @@ import { GLYPH_W, GLYPH_H, segmentGlyphs, readNumber, matchGlyph, MAX_GLYPH_DIST
 import { GLYPH_TEMPLATES } from "../src/vision/glyphs";
 import { inkMask, whiteDistance, fractionOfMaxThreshold, lumaStdDev, type RgbaImage } from "../src/vision/image";
 import { probeScreen, findPanel } from "../src/vision/classify";
+import { turnCandidates, resolveTurn, calendarFor } from "../src/vision/turn";
 import { readFrame } from "../src/vision/read";
 import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X, isPanelShaped, cropImage } from "../src/vision/layout";
 import { chipLevelField } from "../src/vision/fields";
@@ -157,6 +158,52 @@ console.log("\nvision: classification and layout");
     chipLevelField(0, true).box.y0 < chipLevelField(0, false).box.y0,
     "the selected chip rides ~40px up; trying both offsets is how the reader " +
     "identifies WHICH facility is selected without reading a word");
+}
+
+console.log("\nvision: which turn is this");
+{
+  // The reader cannot read the calendar, so the career turn comes from the
+  // concert countdown. This is the arithmetic the whole live advice rests on:
+  // get it wrong and the planner is confidently solving a different problem.
+  check("a countdown names every turn it could be, not one of them",
+    turnCandidates(2).join() === "22,34,46,58,70",
+    "the concerts are evenly spaced, so nothing on the screen separates these");
+
+  check("a countdown of 0 is a concert turn",
+    turnCandidates(0).join() === "24,36,48,60,72");
+
+  check("a known position resolves the ambiguity",
+    resolveTurn(2, 30) === 34 && resolveTurn(2, 20) === 22 && resolveTurn(2, 34) === 34);
+
+  check("with no prior, an ambiguous countdown resolves to nothing",
+    resolveTurn(2, null) === null,
+    "returned rather than guessed -- the caller asks the player once");
+
+  // The rule that "nearest" gets wrong: from 50 the candidates are 46 and 58,
+  // and 46 is closer. Picking it would drag a running career back twelve turns.
+  check("a career is never rewound, even to a nearer candidate",
+    resolveTurn(2, 50) === 58 && resolveTurn(2, 40) === 46,
+    "from 50 the nearest candidate is 46 and the right answer is 58");
+
+  check("an impossible countdown resolves to nothing at all",
+    turnCandidates(99).length === 0 && resolveTurn(99, 30) === null,
+    "no concert sits 99 turns from any turn in a 72-turn career");
+
+  // The slack is deliberate and is one turn, not more: a known value can lag a
+  // frame behind without the resolution refusing to move.
+  check("the one-turn slack lets a stale known value still resolve",
+    resolveTurn(2, 35) === 34);
+
+  // The label is what a player recognises. Turn 34 is the frame that exposed
+  // the bug: the planner was told turn 1 and believed 71 turns remained.
+  check("a turn maps to the calendar the game prints",
+    calendarFor(34) === "Classic Late May" &&
+    calendarFor(1) === "Junior Early Jan" &&
+    calendarFor(72) === "Senior Late Dec",
+    `${calendarFor(1)} … ${calendarFor(34)} … ${calendarFor(72)}`);
+
+  check("the calendar and the countdown agree on the real frame",
+    turnCandidates(2).includes(34) && calendarFor(34) === "Classic Late May");
 }
 
 console.log("\nvision: finding the panel in a bigger capture");

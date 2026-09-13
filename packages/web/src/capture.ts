@@ -18,6 +18,7 @@ import { findPanel, probeScreen } from "../../engine/src/vision/classify";
 import { cropImage } from "../../engine/src/vision/layout";
 import { readFrame, type FrameReading } from "../../engine/src/vision/read";
 import { meanLuma, lumaStdDev, type Box } from "../../engine/src/vision/image";
+import { turnCandidates, resolveTurn, calendarFor } from "../../engine/src/vision/turn";
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
@@ -49,7 +50,7 @@ export function mountCapture(
    * for it by pressing the button -- an automatic sync must never yank them to
    * another tab while they are looking at the game.
    */
-  onApply: (reading: FrameReading, focus: boolean) => void,
+  onApply: (reading: FrameReading, turn: number | null, focus: boolean) => void,
 ): CaptureHandle {
   const already = mounted.get(host);
   if (already) return already;
@@ -67,6 +68,7 @@ export function mountCapture(
         keep Turn advice in sync</label>
     </p>
     <div id="cap-status"></div>
+    <div id="cap-turn"></div>
     <div class="cols">
       <div><section class="card"><h2>What it reads</h2><div id="cap-read"></div></section></div>
       <div><section class="card"><h2>The frame</h2><canvas id="cap-preview"></canvas></section></div>
@@ -79,6 +81,7 @@ export function mountCapture(
   const readEl = host.querySelector<HTMLElement>("#cap-read")!;
   const preview = host.querySelector<HTMLCanvasElement>("#cap-preview")!;
   const autoBox = host.querySelector<HTMLInputElement>("#cap-auto")!;
+  const turnEl = host.querySelector<HTMLElement>("#cap-turn")!;
 
   /** What was last pushed to the planner, and when -- see the sync rule below. */
   let lastSyncSig = "";
@@ -135,6 +138,25 @@ export function mountCapture(
    * front of you.
    */
   const rememberedLevels = new Map<string, number>();
+
+  /**
+   * The career turn, once known, and the frames still needed to confirm a read.
+   *
+   * TWO FRAMES MUST AGREE BEFORE ANYTHING IS PUSHED. A one-shot scan can afford
+   * to trust a confident read, because the player is looking at the result. A
+   * stream cannot: `applyScan` only overwrites the fields it managed to read, so
+   * a single bad value is permanent -- later frames that REFUSE that field never
+   * correct it. That is exactly what happened: one frame read speed as 1600,
+   * every frame after it declined to read speed at all, and the planner carried
+   * 1600 for the rest of the session.
+   *
+   * Agreement across two frames is cheap here because a stat only changes when a
+   * turn is taken, so the true value is on screen for many frames, while a
+   * misread is a one-off artefact of compression or animation.
+   */
+  let knownTurn: number | null = null;
+  let pendingSig = "";
+  let pendingCount = 0;
   function vote(v: string | undefined): string | undefined {
     recent.push(v);
     if (recent.length > 5) recent.shift();
@@ -160,6 +182,7 @@ export function mountCapture(
     startBtn.hidden = true; stopBtn.hidden = false;
     frames = 0; panelsFound = 0; blackFrames = 0;
     locked = null; lockMisses = 0; recent.length = 0;
+    knownTurn = null; pendingSig = ""; pendingCount = 0;
     timer = window.setInterval(() => void tick(), 500);
   }
 
@@ -251,12 +274,21 @@ export function mountCapture(
     // frames: the stats only move when a turn is taken, so a material change is
     // rare, and rate-limiting it stops a flickering read from thrashing the
     // search.
-    if (autoBox.checked) {
-      const sig = STATS.map((s2) => r.stats[s2] ?? "-").join(",") + "|" + (r.skillPts ?? "-");
+    const sig = STATS.map((s2) => r.stats[s2] ?? "-").join(",") + "|" + (r.skillPts ?? "-")
+      + "|" + (r.concertIn ?? "-");
+    if (sig === pendingSig) pendingCount++; else { pendingSig = sig; pendingCount = 1; }
+
+    if (r.concertIn !== undefined) {
+      const resolved = resolveTurn(r.concertIn, knownTurn);
+      if (resolved !== null) knownTurn = resolved;
+    }
+    renderTurn(r);
+
+    if (autoBox.checked && pendingCount >= 2) {
       const now = performance.now();
       if (sig !== lastSyncSig && now - lastSyncAt > 3000) {
         lastSyncSig = sig; lastSyncAt = now;
-        onApply(r, false);
+        onApply(r, knownTurn, false);
       }
     }
 
@@ -281,9 +313,45 @@ export function mountCapture(
     ].join("");
   }
 
+  /**
+   * The turn, and the one question this pane ever asks.
+   *
+   * The concert countdown names five possible turns and nothing on screen
+   * separates them, so the first reading is genuinely ambiguous. Rather than
+   * guess -- the failure that put the planner on turn 1 while the player was on
+   * turn 34 -- it offers the five calendars the game itself prints and takes one
+   * click. After that the career is tracked forward and it never asks again.
+   */
+  function renderTurn(r: FrameReading): void {
+    if (knownTurn !== null) {
+      turnEl.innerHTML = `<p class="note">Career turn <strong>${knownTurn}</strong> &mdash;
+        ${esc(calendarFor(knownTurn))}, ${72 - knownTurn} turns left in the career.</p>`;
+      return;
+    }
+    if (r.concertIn === undefined) {
+      turnEl.innerHTML = `<p class="note">Waiting to read the concert countdown, which is
+        what places the career turn.</p>`;
+      return;
+    }
+    const opts = turnCandidates(r.concertIn)
+      .map((t) => `<button class="go pick" data-turn="${t}">${esc(calendarFor(t))}</button>`)
+      .join(" ");
+    turnEl.innerHTML = `<div class="banner">
+      <strong>Which of these is on your screen?</strong>
+      The concert is ${r.concertIn} turns away, and that is true on five different turns.
+      One click and the career is tracked from here on.<br>${opts}</div>`;
+  }
+
+  turnEl.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".pick");
+    if (!b) return;
+    knownTurn = Number(b.dataset.turn);
+    if (lastReading) { renderTurn(lastReading); onApply(lastReading, knownTurn, false); }
+  });
+
   startBtn.addEventListener("click", () => void start());
   stopBtn.addEventListener("click", () => stop());
-  applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading, true); });
+  applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading, knownTurn, true); });
 
   const handle: CaptureHandle = { stop };
   mounted.set(host, handle);

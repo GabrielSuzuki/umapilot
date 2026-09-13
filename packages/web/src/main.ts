@@ -314,8 +314,14 @@ tabs.addEventListener("click", (e) => {
  * player typed. Facility levels are read but deliberately not applied -- they
  * belong to the run setup rather than to this turn.
  */
-function applyFromCapture(r: FrameReading, focus: boolean): void {
+function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean): void {
   edit = applyScan(edit, r);
+  // The turn is the one field the scan path deliberately never set, because
+  // `turnsLeft` on the screen counts to the next GOAL and is not the career
+  // position. The capture pane derives the real turn from the concert
+  // countdown, and without it the planner solves the wrong problem: on the
+  // frame that exposed this it believed 71 turns remained when 38 did.
+  if (turn !== null) edit.turn = turn;
   lastScan = {
     ok: true,
     filled: [
