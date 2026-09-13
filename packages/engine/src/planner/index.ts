@@ -335,11 +335,21 @@ export function plan(
       ? ["energy is at its ceiling, so rest is not offered this turn: it would " +
          "clamp to no gain at all"]
       : []),
+    // ROUNDED TO 5%, DELIBERATELY. The scale rides on a sampled projection and
+    // is recomputed every turn, and measurement (`diagnose-goalscale.ts`, 3
+    // seeds x 72 turns) says it wobbles by ~0.9 percentage points a turn with
+    // no trend -- 39 up against 32 down, range 0.44..0.56. That is estimator
+    // noise around a constant, not the target coming into reach, and a player
+    // reading "48%" then "50%" then "47%" is being shown the sampler rather
+    // than their run. Rounding is the honest resolution of the number.
+    //
+    // On a REACHABLE target the scale is pinned at exactly 1.000 for all 72
+    // turns on every seed tried, so this line never fires there.
     ...(goalScale < 1
       ? [`your target totals more than this run is projected to produce, so it ` +
-         `is being pursued at ${(100 * goalScale).toFixed(0)}% of the numbers you ` +
-         `entered, keeping the same balance between stats. "Met" still means the ` +
-         `full number you asked for`]
+         `is being pursued at about ${(5 * Math.round(20 * goalScale)).toFixed(0)}% ` +
+         `of the numbers you entered, keeping the same balance between stats. ` +
+         `"Met" still means the full number you asked for`]
       : []),
     ...(isCampTurn(state.turn)
       ? ["this is a summer camp turn: every facility trains at level 5 " +
