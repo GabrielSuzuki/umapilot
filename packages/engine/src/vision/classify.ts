@@ -151,6 +151,51 @@ function edgeEnergyByColumn(img: RgbaImage, y0: number, y1: number): Float64Arra
 /** The stat row's outer borders and cell dividers, in reference pixels. */
 const STAT_ROW_COMB = [122, 219, 314, 409, 504, 599, 700] as const;
 
+/**
+ * The stat row's header band, cell by cell: five blue, then one teal.
+ *
+ * THIS IS WHAT BREAKS THE COMB'S PERIODICITY, and without it the comb is
+ * dangerous rather than merely imprecise. Its teeth are the cell dividers,
+ * which sit 95 to 101 pixels apart -- so an offset ONE CELL wrong aligns five
+ * of the seven teeth and scores 12704 against the true 16778. On the reference
+ * frames the coarse probes broke the tie; on a live capture with a different
+ * window beside the game they do not, and the panel locks one cell left. Every
+ * downstream read then comes from a neighbouring column: the facility chips
+ * report the chip next door, which is why a selection flickered between guts
+ * and power on frames whose stats had not changed.
+ *
+ * The header band cannot be satisfied by a shifted alignment, because it is not
+ * periodic. "Skill Pts" is teal (95, 209, 221) where the five stat headers are
+ * blue (~140, 177, 225), and a one-cell shift puts a blue cell where the teal
+ * must be. One asymmetric feature is worth more here than a sharper symmetric
+ * one.
+ */
+const HEADER_Y = [703, 716] as const;
+
+function headerSignature(img: RgbaImage, x0: number, scale: number): number {
+  const cellMean = (a: number, b: number): [number, number, number] => {
+    let r = 0, g = 0, bl = 0, n = 0;
+    const ya = Math.round(HEADER_Y[0] * scale), yb = Math.round(HEADER_Y[1] * scale);
+    const xa = Math.round(x0 + (a + 8) * scale), xb = Math.round(x0 + (b - 8) * scale);
+    for (let y = Math.max(0, ya); y < Math.min(img.height, yb); y++) {
+      let i = (y * img.width + Math.max(0, xa)) * 4;
+      for (let x = Math.max(0, xa); x < Math.min(img.width, xb); x++, i += 4) {
+        r += img.data[i]!; g += img.data[i + 1]!; bl += img.data[i + 2]!; n++;
+      }
+    }
+    return n === 0 ? [0, 0, 0] : [r / n, g / n, bl / n];
+  };
+
+  let score = 0;
+  for (let i = 0; i < 5; i++) {
+    const [r, g, b] = cellMean(STAT_ROW_COMB[i]!, STAT_ROW_COMB[i + 1]!);
+    if (b > 190 && b > r + 50 && g > r && g < b) score++;         // stat header: blue
+  }
+  const [r, g, b] = cellMean(STAT_ROW_COMB[5]!, STAT_ROW_COMB[6]!);
+  if (g > 180 && b > 180 && r < 150) score++;                      // Skill Pts: teal
+  return score;
+}
+
 export function findPanel(img: RgbaImage): PanelSearch | null {
   if (isPanelShaped(img)) {
     return { box: { x0: 0, y0: 0, x1: img.width, y1: img.height }, cost: 0, exact: true };
@@ -194,17 +239,24 @@ export function findPanel(img: RgbaImage): PanelSearch | null {
     return sum;
   };
 
-  let bestX = seeds[0] ?? 0, bestCost = Infinity;
+  let bestX = seeds[0] ?? 0, bestCost = Infinity, bestSig = -1;
   for (const seed of seeds) {
-    let peakX = seed, peak = -Infinity;
+    let peakX = -1, peak = -Infinity;
     const lo = Math.max(0, seed - 96), hi = Math.min(img.width - w, seed + 96);
     for (let x = lo; x <= hi; x++) {
+      // The header signature GATES the comb rather than being averaged with it.
+      // A one-cell-shifted alignment is not slightly worse, it is wrong, and a
+      // weighted sum would let a strong comb score buy its way past that.
+      if (headerSignature(img, x, scale) < 5) continue;
       const v = combAt(x);
       if (v > peak) { peak = v; peakX = x; }
     }
+    if (peakX < 0) continue;
     const c = panelCost(probeScreen(cropImage(img, boxAt(peakX))));
-    if (c < bestCost) { bestCost = c; bestX = peakX; }
+    const sig = headerSignature(img, peakX, scale);
+    if (sig > bestSig || (sig === bestSig && c < bestCost)) { bestSig = sig; bestCost = c; bestX = peakX; }
   }
+  if (bestSig < 5) return null;
 
   // The accept test is `probeScreen`'s own verdict, not a second cost cap.
   //

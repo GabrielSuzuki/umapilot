@@ -19,7 +19,7 @@
  * frame the way they handle a screenshot.
  */
 import { STATS } from "../../data/src/types";
-import { findPanel } from "../../engine/src/vision/classify";
+import { findPanel, probeScreen } from "../../engine/src/vision/classify";
 import { cropImage } from "../../engine/src/vision/layout";
 import { readFrame } from "../../engine/src/vision/read";
 import { meanLuma, lumaStdDev } from "../../engine/src/vision/image";
@@ -38,6 +38,42 @@ const work = document.createElement("canvas");
 let stream: MediaStream | null = null;
 let timer: number | null = null;
 let frames = 0, panelsFound = 0, blackFrames = 0;
+
+/**
+ * The located panel, kept between frames.
+ *
+ * Searching every frame was wrong twice over. It cost ~300ms of a 500ms budget,
+ * and it let the answer MOVE: the game window does not wander during a session,
+ * but the search is a scored guess and a scored guess can land differently on
+ * two frames of the same scene. Locking it means the panel is decided once and
+ * every later read is against the same pixels.
+ *
+ * Re-searched only after several consecutive frames fail to verify -- one
+ * failure is a menu or a race, which is normal and must not throw the lock
+ * away.
+ */
+let locked: { x0: number; y0: number; x1: number; y1: number } | null = null;
+let lockMisses = 0;
+const RELOCK_AFTER = 12;
+
+/**
+ * The last few selections, for a majority vote.
+ *
+ * Per-frame the reader is right or it is nothing; across frames it can still
+ * flicker while the game animates a chip sliding up. A short vote costs a
+ * second of latency on a turn that lasts as long as the player takes to think,
+ * and it is the difference between a log entry and a log of twitches.
+ */
+const recentSelected: Array<string | undefined> = [];
+function voteSelected(v: string | undefined): string | undefined {
+  recentSelected.push(v);
+  if (recentSelected.length > 5) recentSelected.shift();
+  const counts = new Map<string, number>();
+  for (const s of recentSelected) if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+  let best: string | undefined, n = 0;
+  for (const [k, c] of counts) if (c > n) { n = c; best = k; }
+  return n >= 2 ? best : undefined;
+}
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
@@ -61,6 +97,7 @@ async function start(): Promise<void> {
   stream.getVideoTracks()[0]?.addEventListener("ended", () => stop());
   startBtn.hidden = true; stopBtn.hidden = false;
   frames = 0; panelsFound = 0; blackFrames = 0;
+  locked = null; lockMisses = 0; recentSelected.length = 0;
   timer = window.setInterval(() => void tick(), 500);
 }
 
@@ -92,9 +129,21 @@ async function tick(): Promise<void> {
   if (black) blackFrames++;
 
   const t0 = performance.now();
-  const found = findPanel(img);
+  let box = locked;
+  let relocated = false;
+  if (box) {
+    // Cheap check: does the locked crop still look like a training screen?
+    // A miss is usually just a menu, so the lock survives a run of them.
+    const probe = probeScreen(cropImage(img, box));
+    if (probe.kind === "training") lockMisses = 0;
+    else if (++lockMisses >= RELOCK_AFTER) { locked = null; box = null; }
+  }
+  if (!box) {
+    const found = findPanel(img);
+    if (found) { locked = found.box; box = found.box; lockMisses = 0; relocated = true; }
+  }
   const ms = performance.now() - t0;
-  if (found) panelsFound++;
+  if (box) panelsFound++;
 
   // Preview at a readable size.
   const scale = Math.min(1, 380 / w);
@@ -102,28 +151,30 @@ async function tick(): Promise<void> {
   const pctx = preview.getContext("2d");
   if (pctx) {
     pctx.drawImage(video, 0, 0, preview.width, preview.height);
-    if (found) {
-      pctx.strokeStyle = "#3a7"; pctx.lineWidth = 2;
-      pctx.strokeRect(found.box.x0 * scale, found.box.y0 * scale,
-        (found.box.x1 - found.box.x0) * scale, (found.box.y1 - found.box.y0) * scale);
+    if (box) {
+      pctx.strokeStyle = relocated ? "#e90" : "#3a7"; pctx.lineWidth = 2;
+      pctx.strokeRect(box.x0 * scale, box.y0 * scale,
+        (box.x1 - box.x0) * scale, (box.y1 - box.y0) * scale);
     }
   }
 
   say(`<p class="note">
       frame ${w}&times;${h} &middot; ${frames} frames &middot;
-      panel found on ${panelsFound}/${frames} &middot; ${ms.toFixed(0)} ms to locate
+      panel on ${panelsFound}/${frames} &middot;
+      ${locked ? `locked at x=${locked.x0}` : "searching"} &middot; ${ms.toFixed(0)} ms
     </p>
     ${black ? `<div class="banner"><strong>Frames are coming through BLACK.</strong>
       Brightness ${luma.toFixed(1)}, variation ${spread.toFixed(1)} — that is a capture
       that is not seeing the game rather than a dark scene. ${blackFrames} of ${frames}
       frames so far. Try sharing the whole screen instead of the window, or running the
       game borderless-windowed rather than exclusive fullscreen.</div>` : ""}
-    ${!found && !black ? `<p class="note">Frames are arriving, but no training screen in this one —
+    ${!box && !black ? `<p class="note">Frames are arriving, but no training screen in this one —
       that is expected on menus, races and dialogs.</p>` : ""}`);
 
-  if (!found) { readEl.innerHTML = `<p class="note">Waiting for a training screen.</p>`; return; }
+  if (!box) { readEl.innerHTML = `<p class="note">Waiting for a training screen.</p>`; return; }
 
-  const r = readFrame(cropImage(img, found.box));
+  const r = readFrame(cropImage(img, box));
+  const voted = voteSelected(r.selected);
   const row = (k: string, v: unknown) =>
     `<div class="out"><span>${k}</span><span class="n">${v === undefined ? "—" : esc(String(v))}</span></div>`;
   readEl.innerHTML = [
@@ -131,7 +182,8 @@ async function tick(): Promise<void> {
     row("turns left", r.turnsLeft),
     row("concert in", r.concertIn),
     row("skill points", r.skillPts),
-    row("selected", r.selected),
+    row("selected", voted),
+    row("selected (this frame)", r.selected),
     ...STATS.map((s) => row(s, r.stats[s])),
     ...STATS.map((s) => row(`${s} lvl`, r.facilityLevels[s])),
     r.chipLevelsHidden ? `<p class="note">No chip printed a level — this is what summer camp looks like.</p>` : "",
