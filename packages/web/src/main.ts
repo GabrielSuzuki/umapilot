@@ -21,11 +21,13 @@ import { loadDataset } from "./dataset";
 import { defaultSetup, makeScenario, editableFrom, applyEditable, type Editable } from "./run";
 import { imageFromFile, scanImage, applyScan, type ScanResult } from "./scan";
 import { mountCapture } from "./capture";
+import { mountSetup, loadStored, saveStored, storedFrom, setupFrom, type StoredSetup } from "./setup";
 import type { FrameReading } from "../../engine/src/vision/read";
 
 const app = document.getElementById("app")!;
 const paneAdvice = document.getElementById("pane-advice")!;
 const paneCapture = document.getElementById("pane-capture")!;
+const paneSetup = document.getElementById("pane-setup")!;
 const maybe = loadDataset();
 if ("error" in maybe) {
   paneAdvice.innerHTML = `<div class="err"><strong>No dataset.</strong><br>${maybe.error}</div>`;
@@ -33,8 +35,19 @@ if ("error" in maybe) {
 }
 const loaded = maybe;
 
-const setup = defaultSetup();
-const scenario = makeScenario(loaded.scenario, setup);
+/**
+ * The run setup, and why the scenario is rebuilt rather than fixed.
+ *
+ * `defaultSetup()` is one captured career and was, until now, the only deck the
+ * app could have. Changing a card changes what the engine IS -- rainbow
+ * structure, friendship bonuses, the scenario-link count -- so the scenario
+ * object is rebuilt from scratch on every edit rather than patched.
+ */
+const fallbackSetup = defaultSetup();
+let stored: StoredSetup = loadStored() ?? storedFrom(fallbackSetup);
+let setup = setupFrom(stored, loaded.supportCards);
+if (setup.cards.length === 0) setup = fallbackSetup;   // empty deck: keep the app usable
+let scenario = makeScenario(loaded.scenario, setup);
 let edit: Editable = editableFrom(scenario.initialState());
 let target: RunTarget = {
   ...EMPTY_TARGET,
@@ -304,6 +317,7 @@ tabs.addEventListener("click", (e) => {
   }
   paneAdvice.hidden = want !== "advice";
   paneCapture.hidden = want !== "capture";
+  paneSetup.hidden = want !== "setup";
 });
 
 /**
@@ -340,5 +354,23 @@ function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean):
 }
 
 mountCapture(paneCapture, applyFromCapture);
+
+/**
+ * Rebuilding on a setup change keeps the turn state the player has entered.
+ *
+ * A new deck does not mean a new turn, new stats or a new target -- it means
+ * the same situation evaluated against a different run. Resetting the editable
+ * fields on every card change would make the setup pane unusable, because
+ * entering six cards would wipe the state six times.
+ */
+mountSetup(paneSetup, loaded.supportCards, stored, (next) => {
+  stored = next;
+  saveStored(next);
+  const rebuilt = setupFrom(next, loaded.supportCards);
+  if (rebuilt.cards.length === 0) return;             // mid-edit, not yet a deck
+  setup = rebuilt;
+  scenario = makeScenario(loaded.scenario, setup);
+  recompute();
+});
 
 recompute();

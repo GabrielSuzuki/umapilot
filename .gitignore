@@ -40,3 +40,14 @@ probe-*.py
 # is the real output and two copies drift.
 tools/vision/glyphs.json
 tools/vision/out/
+
+# Where the Claude desktop app saves delivered files. It sits inside the repo
+# because that is where the app was pointed, not because it belongs here --
+# every change set since 0022 has landed in it, including two megabytes of
+# screenshots. `git add -A` would have committed the lot.
+Claude outputs/
+
+# The commit messages that come with a delivery, used as `git commit -F` and
+# then deleted. Ignored so that forgetting to delete one does not leave the
+# tree dirty, which has happened.
+COMMIT_*.txt

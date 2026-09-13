@@ -30,8 +30,30 @@ function pick(prefix: string): unknown | null {
   return any ? any[1] : null;
 }
 
+/** One support card as the extractor emits it: effects tabled by card level. */
+export interface SupportCardRecord {
+  id: number;
+  name: string;
+  charaName?: string;
+  rarity: string;
+  kind: "stat" | "friend" | "group";
+  stat: string | null;
+  effects: Record<string, Record<string, number>>;
+}
+
 export interface Loaded {
   scenario: GrandConcertDataset;
+  /**
+   * Every support card in the player's own extract.
+   *
+   * The deck has been hardcoded to `examples/real-run.json` since the web app
+   * existed, which means every recommendation has been computed against one
+   * particular old career's deck. Which facilities can rainbow is a property of
+   * the deck and is the largest single lever on what gets recommended, so that
+   * was not a small approximation -- it was a wrong premise under a correct
+   * calculation.
+   */
+  supportCards: SupportCardRecord[];
   sha: string;
 }
 
@@ -45,7 +67,10 @@ export function loadDataset(): Loaded | { error: string } {
         "deliberately not committed to this repo.",
     };
   }
+  const cardFile = pick("support-cards") as { supportCards?: SupportCardRecord[] } | null;
+  const supportCards = cardFile?.supportCards ?? [];
+
   const sha =
     (scenario as unknown as { source?: { sha256?: string } }).source?.sha256 ?? "unknown";
-  return { scenario, sha: sha.slice(0, 12) };
+  return { scenario, supportCards, sha: sha.slice(0, 12) };
 }
