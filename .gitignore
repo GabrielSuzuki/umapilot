@@ -25,3 +25,18 @@ tools/probe/
 diagnose-*.ts
 probe-*.py
 *.patch
+
+# tools/vision/ is NOT in that list, deliberately.
+#
+# The rule above is about scratch: a diagnostic answers a question and dies, and
+# none of them belong in history. tools/vision/ is the opposite -- induce.ts
+# GENERATES a committed artefact, packages/engine/src/vision/glyphs.ts, and
+# corpus.ts defines the held-out split the accuracy figures in
+# docs/m3c-vision.md are measured on. Ignored, the templates become
+# unreproducible: nobody could rebuild them after a layout change or a new
+# capture, and nobody could check the split the numbers rest on.
+#
+# What IS ignored is the intermediate it writes on the way, since the .ts file
+# is the real output and two copies drift.
+tools/vision/glyphs.json
+tools/vision/out/
