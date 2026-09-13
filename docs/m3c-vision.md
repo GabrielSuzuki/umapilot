@@ -288,8 +288,8 @@ is now read off all 58 training frames by `tools/vision/caps-probe.ts`:
 | Guts | 1500 | 1500 | 1500 |
 | Wit | 1300 | 1300 | 1304 |
 
-Converted to career turns, the steps are at **turn 31 and turn 55** — Classic
-Early Apr and Senior Early Apr. `scan-spec.md` had recorded caps as per-*run* —
+Converted to career turns, the steps first read at **turn 31 and turn 55** — the
+screens after the inheritance events on turns 30 and 54. `scan-spec.md` had recorded caps as per-*run* —
 set by legacy, read once off Legacy Select — and that is the kind of claim
 nothing re-checks, because a constant is read once by definition.
 `validateTarget` and `statOutlook` were both running on it.
@@ -330,10 +330,17 @@ player's own note on frame 59 ("Stat caps have crept up to 1635/1342/1343/
 reading +0 — the cap confirmed from a different field in a different template
 set.
 
-**What raises them is not known.** Guts never moves, wit moves once, and the
-steps are +5/+4/+5/0/0 then +5/+6/+6/0/+4: neither a flat bonus nor a clean
-percentage. The app records what the screen says and re-reads it every turn
-rather than modelling it.
+**What raises them is the inheritance event**, and the player settled it: turns
+30 and 54 are Classic Late March and Senior Late March, the two "Inspiration"
+events, and his log from a later career says it outright — *"Stamina cap went up
+by 10 … Power cap went up by 1 … Wit cap went up by 3."* The amounts come from
+the sparks his parents and grandparents carry, which is why they were never flat
+and never a percentage: guts never moved because that pairing had no guts spark.
+
+Nothing in this repo can predict the amounts, so the app still does the same
+thing — read the cap row every turn — but it now knows *when* to expect a change
+and stops calling a target impossible while the event that would raise the cap is
+still ahead.
 
 `capSmall` has templates for 0–7 only, because 8 and 9 never appear in a cap in
 this career. A cap containing one reads as **nothing**, not as something else,

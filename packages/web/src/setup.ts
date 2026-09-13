@@ -82,7 +82,7 @@ export interface SetupPane {
    * Here rather than in the turn state because a cap is a property of the RUN,
    * and it is pushed rather than typed because it MOVES: the captured career
    * shows speed going 1625 -> 1630 -> 1635 and stamina 1332 -> 1336 -> 1342,
-   * each step on Early Apr, turns 31 and 55. A player who typed the caps off
+   * raised by the inheritance events on turns 30 and 54. A player who typed the caps off
    * Legacy Select in Junior year would be running on stale numbers for two
    * thirds of the career and would have no reason to suspect it.
    *
@@ -183,10 +183,11 @@ export function mountSetup(
         ${statRow("Facility levels", "facilityLevels")}
         <p class="note">Caps are per-run, not per-scenario — legacy raises them, so
           read them off Legacy Select. They also rise <em>during</em> a run: the
-          captured career went 1625 → 1630 → 1635 on speed, both steps on Early
-          Apr. Live capture reads the cap row every turn and follows them for you,
-          so you should not have to come back here — including into a new career,
-          where the caps are usually lower than the last one's.</p>
+          two inheritance events (Classic and Senior Late March) raise them by
+          whatever your parents' sparks give. Live capture reads the cap row every
+          turn and follows them for you, so you should not have to come back here
+          — including into a new career, where the caps are usually lower than the
+          last one's.</p>
       </section>
       <p><button class="go danger" id="set-reset">Discard this deck and load the captured career</button></p>
       <p class="note">That button replaces everything on this page. It is the one

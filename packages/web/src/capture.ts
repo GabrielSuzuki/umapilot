@@ -290,7 +290,18 @@ export function mountCapture(
     }
     renderTurn(r);
 
-    if (autoBox.checked && pendingCount >= 2) {
+    // A SYNC THAT CARRIES NOTHING IS NOT A SYNC.
+    //
+    // `findPanel` can succeed on a frame that `probeScreen` then rejects -- a
+    // menu that happens to be panel-shaped -- and `readFrame` answers that with
+    // every field empty. Those empties agreed with each other two frames
+    // running, passed the rate limit, and were pushed into the advice pane,
+    // which duly reported "Took from the frame: nothing" with all six fields
+    // listed as refusals. The player saw that message constantly and reasonably
+    // concluded the reader was broken; it was reading nothing and saying so.
+    const readSomething = Object.keys(r.stats).length > 0 || r.skillPts !== undefined;
+
+    if (autoBox.checked && readSomething && pendingCount >= 2) {
       const now = performance.now();
       if (sig !== lastSyncSig && now - lastSyncAt > 3000) {
         lastSyncSig = sig; lastSyncAt = now;

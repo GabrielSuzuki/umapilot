@@ -248,6 +248,22 @@ function mountDrop(): void {
   });
 }
 
+/** A labelled <select>, for the fields that are a choice rather than a number. */
+function choice(
+  label: string, value: string, options: Array<[string, string]>, on: (v: string) => void,
+) {
+  const wrap = document.createElement("label");
+  wrap.textContent = label;
+  const sel = document.createElement("select");
+  for (const [v, text] of options) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = text; o.selected = v === value;
+    sel.append(o);
+  }
+  sel.addEventListener("change", () => on(sel.value));
+  return [wrap, sel] as const;
+}
+
 function field(label: string, value: number, on: (v: number) => void, min = 0, max = 9999) {
   const wrap = document.createElement("label");
   wrap.textContent = label;
@@ -280,6 +296,66 @@ function mountEditor() {
     const c = setup.cards[i];
     add(`bond · ${c?.stat ?? "friend"}`, b, (n) => (edit.bonds[i] = n), 0, 100);
   });
+
+  /*
+   * WHERE THE CARDS ARE STANDING THIS TURN.
+   *
+   * The engine re-rolls this every turn, so before this existed the advice was
+   * computed against a board the game never showed -- and rainbow is the largest
+   * multiplier there is, so on any given turn that is not a detail, it is most
+   * of the answer. "Seems to always recommend speed regardless of friendship
+   * training" is what an engine that cannot see the board says.
+   *
+   * Six selects is more clicking than anyone wants every turn, and that is the
+   * argument for the click-through capture rather than for guessing on the
+   * player's behalf.
+   */
+  const hrP = document.createElement("div"); hrP.className = "hr"; hrP.style.gridColumn = "1 / -1";
+  g.append(hrP);
+  const note = document.createElement("p");
+  note.className = "note"; note.style.gridColumn = "1 / -1"; note.style.margin = "0 0 2px";
+  note.textContent = "Which facility is each card on this turn? This is what decides rainbow, "
+    + "and the engine can only guess it.";
+  g.append(note);
+  const where: Array<[string, string]> = [
+    ["", "— not out —"], ...STATS.map((s2) => [s2, s2] as [string, string]),
+  ];
+  setup.cards.forEach((c, i) => {
+    const [a, b] = choice(
+      `on · ${c.stat ?? "friend"}`,
+      edit.placement[i] ?? "",
+      where,
+      (v) => { edit.placement[i] = (v || null) as Stat | null; recompute(); },
+    );
+    g.append(a, b);
+  });
+
+  /*
+   * WHAT THE LESSON BOARD IS SHOWING.
+   *
+   * Same problem, smaller: the board is rolled, so the shop panel was answering
+   * "what should I buy" about three offers the player is not looking at. "The
+   * shop isn't working" was the report, and it was working perfectly against
+   * the wrong board.
+   */
+  const hrB = document.createElement("div"); hrB.className = "hr"; hrB.style.gridColumn = "1 / -1";
+  g.append(hrB);
+  const songOpts: Array<[string, string]> = [
+    ["", "— techniques —"],
+    ...[...loaded.scenario.songs]
+      .sort((x, y) => x.name.localeCompare(y.name))
+      .map((so) => [String(so.id), so.name] as [string, string]),
+  ];
+  for (let slot = 0; slot < 3; slot++) {
+    const cur = edit.offers?.[slot];
+    const [a, b] = choice(`board ${slot + 1}`, cur === undefined ? "" : String(cur), songOpts, (v) => {
+      const next = [...(edit.offers ?? [])];
+      if (v) next[slot] = Number(v); else next.splice(slot, 1);
+      edit.offers = next.filter((n) => Number.isFinite(n)).length ? next : null;
+      recompute();
+    });
+    g.append(a, b);
+  }
   const hr3 = document.createElement("div"); hr3.className = "hr"; hr3.style.gridColumn = "1 / -1";
   g.append(hr3);
   for (const s of STATS) {
@@ -345,10 +421,11 @@ tabs.addEventListener("click", (e) => {
  */
 function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean): void {
   edit = applyScan(edit, r);
+  const readSomething = r.skillPts !== undefined || STATS.some((s) => r.stats[s] !== undefined);
   // THE CAPS ARE NOT CONSTANT. They were treated as a per-run number read once
   // off Legacy Select until the cap row was read on all 58 captured training
   // frames: speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power
-  // 1332 -> 1337 -> 1343, both steps on Early Apr, turns 31 and 55. So every
+  // 1332 -> 1337 -> 1343, raised by the inheritance events on turns 30 and 54. So every
   // frame offers its caps to the setup, which takes them only when they rise
   // and only then pays for a scenario rebuild.
   setupPane?.setCaps(r.statCaps);
@@ -358,6 +435,11 @@ function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean):
   // countdown, and without it the planner solves the wrong problem: on the
   // frame that exposed this it believed 71 turns remained when 38 did.
   if (turn !== null) edit.turn = turn;
+  // Only report a scan that read something. A frame the reader declined whole
+  // used to overwrite the last good report with six refusals, so the advice
+  // pane's standing message was "Took from the frame: nothing" even when the
+  // numbers beside it had just been filled in correctly from an earlier frame.
+  if (!readSomething) { recompute(); return; }
   lastScan = {
     ok: true,
     filled: [

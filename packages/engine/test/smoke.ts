@@ -76,6 +76,35 @@ check("a target above the stat cap is rejected",
   capProblems.some((p) => p.field === "stats.speed" && p.severity === "error"),
   capProblems[0]?.message ?? "");
 
+/*
+ * A CAP IS NOT FINAL UNTIL TURN 54.
+ *
+ * The two inspiration events (Classic and Senior Late March, turns 30 and 54)
+ * raise the caps by whatever the player's parents' sparks give -- in one
+ * captured log, "Stamina cap went up by 10. Power cap went up by 1." So a target
+ * above today's cap is only impossible once both have happened, and calling it
+ * an error before then talks a player out of a build he can actually reach.
+ */
+{
+  const caps = ds.constants.statCaps;
+  const above = { ...target, stats: { ...target.stats, speed: caps.speed + 8 } };
+  // Filtered to the CAP problem: a target this high also trips the 1200-halving
+  // warning on the same field, and counting both would make this assert
+  // something about the halving rule by accident.
+  const capOnly = (t?: number) => validateTarget(above, caps, byId, t)
+    .filter((p) => p.field === "stats.speed" && p.message.includes("cap of"));
+  const early = capOnly(1);
+  const late = capOnly(60);
+  check("a target above the cap is a warning while an inspiration event is ahead",
+    early.length === 1 && early[0]!.severity === "warning",
+    early[0]?.message ?? "no problem raised");
+  check("and an error once both inspiration events have passed",
+    late.length === 1 && late[0]!.severity === "error",
+    late[0]?.message ?? "no problem raised");
+  check("with no turn given it stays an error, which is right pre-run",
+    capOnly().some((p) => p.severity === "error"));
+}
+
 const { total, unknown } = wishlistSpCost(target, byId);
 check("wishlist SP cost resolves", total > 0 && unknown.length === 0, `${total} SP`);
 

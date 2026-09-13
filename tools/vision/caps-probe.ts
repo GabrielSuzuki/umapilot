@@ -8,11 +8,20 @@
  *
  * They move. Speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power
  * 1332 -> 1337 -> 1343, wit 1300 -> 1300 -> 1304, guts 1500 throughout. Both
- * steps land on career turn 31 and career turn 55 -- Classic Early Apr and
- * Senior Early Apr. NOT the first turn of a new year, which is what this file
+ * steps first READ at career turns 31 and 55, which are the screens after the
+ * two INHERITANCE ("Inspiration") events on turns 30 and 54 -- Classic and
+ * Senior Late March. The event activates the player's parents' and
+ * grandparents' sparks and says so in the log: "Stamina cap went up by 10 ...
+ * Power cap went up by 1." That is why guts never moves and the sizes are
+ * neither flat nor a percentage.
+ *
+ * Two wrong answers died on the way, both recorded because the way they died is
+ * the useful part. NOT the first turn of a new year, which is what this file
  * said first: those are turns 25 and 49, and the frames in between read the
- * earlier values. Not after each concert either (24, 36, 48, 60, 72 -- nothing
- * moves after 36 or 60), and not every Early Apr (Junior Early Apr is turn 7).
+ * earlier values -- the claim came from a calendar string nobody converted to a
+ * number. NOT after each concert either (24, 36, 48, 60, 72): the cap row is
+ * unchanged across every one, checked at turns 21-27, 34-39, 45-51 and 59-63,
+ * and this reader resolves a 1-point change.
  *
  * HOW IT WAS FOUND WITHOUT LABELS, AND WITHOUT ARGUING IN A CIRCLE. There is no
  * cap column in the hand transcription, so there was nothing to induce cap

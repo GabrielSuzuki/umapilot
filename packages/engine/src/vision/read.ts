@@ -25,7 +25,7 @@ export interface FrameReading {
    *
    * Read every turn rather than once, because the cap MOVES: in the captured
    * career speed went 1625 -> 1630 -> 1635 and stamina 1332 -> 1336 -> 1342,
-   * both steps landing on Early Apr, turns 31 and 55. A cap read once at the
+   * raised by the inheritance events on turns 30 and 54. A cap read once at the
    * Legacy Select screen and held for 72 turns is wrong for two thirds of the
    * run. See `capField` and `tools/vision/caps-probe.ts`.
    */

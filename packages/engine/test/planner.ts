@@ -1566,5 +1566,64 @@ if (!realFile) {
   console.log(`  ..  top: ${r.recommendations[0]?.rationale ?? "none"}`);
 }
 
+/*
+ * THE ADVICE FOLLOWS THE BOARD.
+ *
+ * `placement` -- which support cards are standing on which facility this turn --
+ * is re-rolled every turn by the scenario, and the web app had no way for the
+ * player to say what he could see. So it advised against a board the game never
+ * showed, and his report was "seems to always recommend speed regardless of
+ * friendship training".
+ *
+ * Rainbow is the largest multiplier in the game, so this is the property that
+ * decides whether a turn's advice means anything at all: put every card on one
+ * facility and that facility has to win. Pinned here because the field is now
+ * editable and a future change that quietly drops it would look like nothing.
+ */
+console.log("\nplanner: the advice follows the board");
+{
+  const scenario = makeScenario();
+  let followed = 0;
+  const got: string[] = [];
+  // Only the stats this target actually wants. Guts and wit are `null` in
+  // TARGET, so a point in them is worth nothing and no multiplier rescues it --
+  // and that is the right behaviour, not a bug to weaken the test around.
+  // Asserting it for all five would be asserting that placement overrides what
+  // the player asked for, which is the opposite of the claim.
+  const wanted = STATS.filter((s2) => TARGET.stats[s2] != null);
+  for (const where of wanted) {
+    const base = scenario.initialState();
+    const placement: Record<Stat, number[]> = { speed: [], stamina: [], power: [], guts: [], wit: [] };
+    const cards = base.scenario.cards.map((c, i) => { placement[where].push(i); return { ...c, bond: 85 }; });
+    const state: GcRunState = { ...base, scenario: { ...base.scenario, cards, placement } };
+    const r = plan(scenario, state, TARGET, { ...FAST, seed: 3 });
+    // The best TRAINING, not the best action. Whether to train at all is a
+    // different question -- at turn 1 recreation genuinely wins on some boards
+    // -- and folding the two together would make this test fail for a reason
+    // that has nothing to do with placement.
+    const top = r.recommendations.find((x) => x.action.kind === "train")?.action;
+    const hit = !!top && top.kind === "train" && top.facility === where;
+    if (hit) followed++;
+    got.push(`${where}->${top && top.kind === "train" ? top.facility : "none"}`);
+  }
+  check("six rainbow-ready cards on a facility make it the training to take",
+    followed === wanted.length, got.join(" "));
+
+  // The other half of the same claim: placement multiplies what a stat is
+  // worth, it does not decide that the stat is worth something. Six rainbow
+  // cards on a facility the target does not want must NOT win.
+  {
+    const base = scenario.initialState();
+    const placement: Record<Stat, number[]> = { speed: [], stamina: [], power: [], guts: [], wit: [] };
+    const cards = base.scenario.cards.map((c, i) => { placement.guts.push(i); return { ...c, bond: 85 }; });
+    const state: GcRunState = { ...base, scenario: { ...base.scenario, cards, placement } };
+    const r = plan(scenario, state, TARGET, { ...FAST, seed: 3 });
+    const top = r.recommendations.find((x) => x.action.kind === "train")?.action;
+    check("a stacked board does not make an unwanted stat worth training",
+      !!top && top.kind === "train" && top.facility !== "guts",
+      `guts is null in the target; best training is ${top && top.kind === "train" ? top.facility : "none"}`);
+  }
+}
+
 console.log(failures === 0 ? "\nplanner: all checks passed" : `\nplanner: ${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

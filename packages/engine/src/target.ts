@@ -60,6 +60,32 @@ export const EMPTY_TARGET: RunTarget = {
 // Validation
 // ---------------------------------------------------------------------------
 
+/**
+ * The two turns on which the stat caps move, and why they move at all.
+ *
+ * Classic Late March and Senior Late March, career turns 30 and 54: the
+ * inheritance ("Inspiration") events. Each one activates the sparks the
+ * player's parents and grandparents carry, and the log says so in as many
+ * words -- "Stamina cap went up by 10. Stamina went up by 73. Power cap went up
+ * by 1."
+ *
+ * This project spent a while treating the caps as a per-run constant, then as a
+ * thing that happens "on the first turn of a new year", then read the cap row on
+ * all 58 captured frames and found the steps at turns 31 and 55 -- which is
+ * these two turns, seen on the next screen after the event resolved. The sizes
+ * were never a flat bonus and never a percentage, because they are a function of
+ * somebody else's horses: in the captured career guts never moved (no guts
+ * spark) and wit moved once.
+ *
+ * Nothing here can predict the amounts. What it can do is stop calling a target
+ * impossible while the event that would make it possible has not happened yet.
+ */
+export const INHERITANCE_TURNS = [30, 54] as const;
+
+function calendarOfTurn(turn: number): string {
+  return turn === 30 ? "Classic Late March" : turn === 54 ? "Senior Late March" : `turn ${turn}`;
+}
+
 export interface TargetProblem {
   field: string;
   message: string;
@@ -77,11 +103,20 @@ export interface TargetProblem {
  * Legacy raises them -- a scanned run showed Stamina at 1366 and Power at 1316
  * against a 1300 base. Validating against the base would reject a target that is
  * actually reachable. Use `effectiveStatCaps` to resolve them.
+ *
+ * AND THE CAPS FOR THIS RUN ARE NOT FINAL UNTIL TURN 54. See
+ * `INHERITANCE_TURNS`: the two inspiration events each raise the caps by an
+ * amount nobody can know in advance, because it comes from the sparks the
+ * player's parents and grandparents carry. Pass `turn` and a target above the
+ * current cap is a WARNING while an inheritance is still ahead, an error only
+ * once both have happened. Omitting `turn` keeps the old behaviour, which is
+ * right for the pre-run screen where there is no turn yet.
  */
 export function validateTarget(
   target: RunTarget,
   statCaps: StatVector,
   skillsById: Map<number, SkillEntry>,
+  turn?: number,
 ): TargetProblem[] {
   const problems: TargetProblem[] = [];
 
@@ -98,10 +133,17 @@ export function validateTarget(
       continue;
     }
     if (want > statCaps[stat]) {
+      const toCome = turn === undefined ? [] : INHERITANCE_TURNS.filter((t) => t >= turn);
       problems.push({
         field: `stats.${stat}`,
-        message: `Above this run's ${stat} cap of ${statCaps[stat]}.`,
-        severity: "error",
+        message: toCome.length === 0
+          ? `Above this run's ${stat} cap of ${statCaps[stat]}.`
+          : `Above this run's ${stat} cap of ${statCaps[stat]} — but ` +
+            `${toCome.length === 2 ? "two inspiration events are" : "an inspiration event is"} ` +
+            `still ahead (${toCome.map((t) => calendarOfTurn(t)).join(" and ")}), and ` +
+            `${toCome.length === 2 ? "each one raises" : "it raises"} the caps by ` +
+            `whatever your parents' sparks give. Read the cap again afterwards.`,
+        severity: toCome.length === 0 ? "error" : "warning",
       });
     }
 
@@ -247,12 +289,23 @@ export function outlookWarning(outlook: StatOutlook[]): string | null {
     .map((o) => `${o.stat} ${o.want} (projects ~${o.projected})`)
     .join(", ");
   const rest = outlook.filter((o) => o.status !== "not projected").map((o) => o.stat);
+  // THE LAST SENTENCE USED TO SAY ONLY "lower them", AND THAT WAS DANGEROUS
+  // ADVICE. This projection comes from a model with no races, no event outcomes
+  // and no skill purchases, which lands at roughly 36-56% of what the captured
+  // real career actually finished on (1479-2874 against 5149). A player who
+  // trusts "not projected" and lowers a target he could in fact hit has been
+  // talked out of his own build by an admitted undercount. So the caveat is in
+  // the same sentence as the suggestion, not in a note further down the page
+  // that he has already scrolled past.
   return (
     `This run is not projected to reach ${parts}. The objective scores a target ` +
     `it cannot meet by spending elsewhere, so the advice below will favour ` +
     `${rest.length ? rest.join(" and ") : "the reachable stats"} rather than ` +
-    `pursue ${missed.length > 1 ? "those targets" : "that target"}. Lower ` +
-    `${missed.length > 1 ? "them" : "it"} to get advice that chases what you asked for.`
+    `pursue ${missed.length > 1 ? "those targets" : "that target"}. ` +
+    `Before lowering ${missed.length > 1 ? "them" : "it"}, know that this model ` +
+    `has no races, no event outcomes and no skill purchases, and finishes a ` +
+    `career at roughly half what a real one does — so "not projected" means ` +
+    `this model does not expect it, not that you cannot get there.`
   );
 }
 

@@ -1,11 +1,38 @@
 {
-  "note": "Stat caps in force during the 2026-09-05 captured career, in STATS order (speed, stamina, power, guts, wit). The caps MOVE during a run. This was carried as a per-run constant -- set by legacy, read once off Legacy Select -- until tools/vision/caps-probe.ts read the cap row on all 58 training frames.",
+  "note": "Stat caps in force during the 2026-09-05 captured career, in STATS order (speed, stamina, power, guts, wit). The caps MOVE during a run: they are raised by the two inheritance (\"Inspiration\") events, at Classic Late March and Senior Late March -- career turns 30 and 54. This file's three segments are what the screen showed before the first event, between the two, and after the second.",
   "segments": [
-    { "fromFrame": 0,  "caps": [1625, 1332, 1332, 1500, 1300] },
-    { "fromFrame": 35, "caps": [1630, 1336, 1337, 1500, 1300] },
-    { "fromFrame": 59, "caps": [1635, 1342, 1343, 1500, 1304] }
+    {
+      "fromFrame": 0,
+      "caps": [
+        1625,
+        1332,
+        1332,
+        1500,
+        1300
+      ]
+    },
+    {
+      "fromFrame": 35,
+      "caps": [
+        1630,
+        1336,
+        1337,
+        1500,
+        1300
+      ]
+    },
+    {
+      "fromFrame": 59,
+      "caps": [
+        1635,
+        1342,
+        1343,
+        1500,
+        1304
+      ]
+    }
   ],
-  "boundaries": "Segment 2 starts at the Classic Year Early Apr turn, career turn 31 (frames 35 and 36 are the same turn); segment 3 at the Senior Year Early Apr turn, career turn 55 (frames 59 and 60). NOT the first turn of a new year -- those are turns 25 and 49, and frames at turns 25-30 and 49-54 read the earlier segment. NOT after each concert either -- the concerts are at 24, 36, 48, 60, 72, and nothing moves after 36 or 60. NOT every Early Apr -- Junior Early Apr is turn 7 and the caps hold at the Legacy Select values through turn 30.",
-  "evidence": "Three independent sources agree and none of them is the OCR that proposed the numbers. (1) Segment 1 is the player's own Legacy Select transcription, already in examples/real-run.json. (2) Segment 3 is the player's own note on frame 59: 'Stat caps have crept up to 1635/1342/1343/1500/1304', written while transcribing and before anyone was looking for this. (3) Frame 80's note records speed sitting at 1635 with the training preview reading +0, so the speed cap is 1635 exactly, read off a different field in a different template set. Segment 2 has no hand transcription and was confirmed by eye against the frames at 6x before being written here.",
-  "unexplained": "Guts does not move at all and wit moves once. The steps are +5/+4/+5/0/0 then +5/+6/+6/0/+4, which is neither a flat bonus nor a clean percentage. What raises them is not known -- this file records what the screen said, not a mechanic."
+  "boundaries": "Segment 2 first reads at career turn 31 and segment 3 at turn 55 -- the screens AFTER the turn-30 and turn-54 events resolved, which is the earliest either could be seen. NOT the first turn of a new year (turns 25 and 49; frames there read the earlier segment), and NOT after each concert: the concerts are at 24, 36, 48, 60, 72, and the cap row is unchanged across every one of them -- checked explicitly at turns 21-27, 34-39, 45-51 and 59-63. The reader resolves a 1-point change (the log above has one), so a small post-concert bump would have shown.",
+  "evidence": "Four sources, none of them the OCR that proposed the numbers. (1) Segment 1 is the player's own Legacy Select transcription, in examples/real-run.json. (2) The player's note on frame 59: 'Stat caps have crept up to 1635/1342/1343/1500/1304', written while transcribing and before anyone was looking for this. (3) Frame 80 records speed at 1635 with the training preview reading +0, so the speed cap is 1635 exactly, read off a different field in a different template set. (4) The player's account of the mechanic and an inspiration log showing cap increases in the game's own words. Segment 2 has no hand transcription and was confirmed by eye at 6x.",
+  "mechanic": "The player supplied an inspiration log from a later career: \"Stamina cap went up by 10. Stamina went up by 73. Power cap went up by 1. Power went up by 4. Wit cap went up by 3. Wit went up by 19.\" The event activates the sparks the player's parents and grandparents carry, so the cap increase is a function of somebody else's horses and cannot be predicted from anything in this repo. That is why the sizes here are neither flat nor a percentage: guts never moves (no guts spark in this pairing) and wit moves only at the second event."
 }

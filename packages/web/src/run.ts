@@ -61,9 +61,37 @@ export interface Editable {
   stats: StatVector;
   skillPoints: number;
   bonds: number[];
+  /**
+   * Which facility each card is standing on THIS turn; null = not on the board.
+   *
+   * THE MOST IMPORTANT FIELD ON THIS SCREEN, and until now the only one the
+   * player could not set. `placement` is re-rolled every turn by the scenario,
+   * so the app was advising against a randomly generated board while the player
+   * was looking at the real one. The player's report was "seems to always
+   * recommend speed regardless of friendship training" -- which is exactly what
+   * an engine that cannot see three rainbow cards on Wit would say.
+   *
+   * Rainbow is the largest multiplier in the game, so this is not a refinement
+   * of the advice; for one turn it is most of the answer.
+   */
+  placement: Array<Stat | null>;
+  /**
+   * The three lesson offers, when the player has said what they are.
+   *
+   * Null means "whatever the model rolled", which is what every turn used to
+   * get. A rolled board is fine for a PROJECTION -- over 72 turns the draw
+   * averages out -- and useless for the shop panel, which is answering "what
+   * should I buy now" about a board the player is looking at and the app is
+   * guessing at.
+   */
+  offers: number[] | null;
 }
 
 export function editableFrom(state: GcRunState): Editable {
+  const placement: Array<Stat | null> = state.scenario.cards.map(() => null);
+  for (const s of STATS) {
+    for (const i of state.scenario.placement[s] ?? []) placement[i] = s;
+  }
   return {
     turn: state.turn,
     energy: state.energy,
@@ -71,6 +99,8 @@ export function editableFrom(state: GcRunState): Editable {
     stats: { ...state.stats },
     skillPoints: state.skillPoints,
     bonds: state.scenario.cards.map((c) => c.bond),
+    placement,
+    offers: null,
   };
 }
 
@@ -82,6 +112,13 @@ export function applyEditable(state: GcRunState, e: Editable): GcRunState {
   }));
   const stats = { ...state.stats };
   for (const s of STATS) stats[s] = Math.max(0, e.stats[s]);
+
+  // The placement the player can see beats the one the scenario rolled. Built
+  // from scratch rather than patched, so a card moved off a facility actually
+  // leaves it -- a partial update here would leave a stale rainbow standing.
+  const placement: Record<Stat, number[]> = { speed: [], stamina: [], power: [], guts: [], wit: [] };
+  e.placement.forEach((s, i) => { if (s) placement[s].push(i); });
+
   return {
     ...state,
     turn: Math.max(1, e.turn),
@@ -89,6 +126,11 @@ export function applyEditable(state: GcRunState, e: Editable): GcRunState {
     mood: Math.max(-2, Math.min(2, e.mood)) as GcRunState["mood"],
     stats,
     skillPoints: Math.max(0, e.skillPoints),
-    scenario: { ...state.scenario, cards },
+    scenario: {
+      ...state.scenario,
+      cards,
+      placement,
+      ...(e.offers ? { offers: [...e.offers] } : {}),
+    },
   };
 }

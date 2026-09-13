@@ -112,47 +112,43 @@ captured career (`tools/vision/caps-probe.ts`):
 | Guts    | 1500 | 1500 | 1500 |
 | Wit     | 1300 | 1300 | 1304 |
 
-**When, exactly.** Mapping the bracketing frames to career turns: the caps hold
+**When, and why.** Mapping the bracketing frames to career turns: the caps hold
 at the Legacy Select values through turn 30 and read the second column at turn
 31; they hold the second column through turn 54 and read the third at turn 55.
-Turns 31 and 55 are **Classic Early Apr** and **Senior Early Apr**.
 
-That rules out the two obvious explanations, including the one this document
-first offered:
+Those are the screens immediately after **career turns 30 and 54** — Classic Late
+March and Senior Late March — which are the two **inheritance ("Inspiration")
+events**. The player supplied a log from a later career, in the game's own words:
 
-- **Not "the first turn of a new year"** — that is turn 25 and turn 49, and
-  frames at turns 25–30 and 49–54 read the *old* caps. This was written here as
-  fact and was wrong; it came from the calendar string saying "Apr" and nobody
-  converting it to a turn number.
-- **Not "after each concert"** — the concerts are at 24, 36, 48, 60, 72. Turns 31
-  and 55 are seven turns after two of them, and nothing moves after the concerts
-  at 36 or 60. Frames at turns 37–43 read the same caps as turn 31, and turn 61
-  reads the same as turn 55.
-- **Not every Early Apr either** — Junior Early Apr is turn 7, and every frame
-  from turn 1 to turn 30 reads the Legacy Select caps unchanged.
+> Inspired by Agnes Tachyon! Stamina spark activated! … **Stamina cap went up by
+> 10. Stamina went up by 73. Power cap went up by 1. Power went up by 4. Wit cap
+> went up by 3. Wit went up by 19.**
 
-So: twice in a career, at Early Apr of the Classic and Senior years. What causes
-it is unknown, and the sizes are not a flat bonus or a clean percentage — guts
-never moves and wit moves once.
+The event activates the sparks the player's parents and grandparents carry, so
+the increase is a function of somebody else's horses. Nothing in this repo can
+predict it, and that is why the sizes were never a flat bonus and never a clean
+percentage: in the captured career guts never moved (no guts spark in that
+pairing) and wit moved only at the second event.
 
-The player's own account is *"after concerts the stat cap is raised as well based
-on stat inherits"*. The **inherits** half fits in one place — guts had a legacy
-bonus of 0 (cap 1500 = the scenario base) and is the one stat that never rises —
-and fails in another: wit also had a bonus of 0 (1300 = base) and still went to
-1304. The **after concerts** half does not fit the turn numbers at all. Recorded
-here as stated, next to the measurement that disagrees, rather than resolved.
+Two explanations this document offered first, and what killed them:
 
-Three witnesses, none of them the OCR that proposed the numbers: the player's
-Legacy Select transcription for the first column; his own note on frame 59
-("Stat caps have crept up to 1635/1342/1343/1500/1304"), written while
-transcribing and before anyone was looking for this; and frame 80, where speed
-sits at 1635 with the training preview reading +0, i.e. the cap read off a
-different field in a different template set.
+- **"The first turn of a new year"** — that is turn 25 and turn 49, and frames at
+  turns 25–30 and 49–54 read the *old* caps. This was written here as fact and
+  was wrong; it came from the calendar string saying "Apr" and nobody converting
+  it to a turn number.
+- **"After each concert"** — the concerts are at 24, 36, 48, 60, 72. The cap row
+  is unchanged across every one of them, checked explicitly at turns 21–27,
+  34–39, 45–51 and 59–63. The reader resolves a 1-point change (the log above
+  contains one), so a small post-concert bump would have shown.
 
 Consequence for the app: the cap row is read **every turn**, not once. A cap
 scanned at Legacy Select and held is 10 points low for the last third of a
 career, which is exactly the region where `statOutlook` is deciding whether more
-speed is worth anything. See `capField` in `packages/engine/src/vision/fields.ts`
+speed is worth anything. And `validateTarget` now takes the turn: a target above
+today's cap is a **warning** while an inspiration event is still ahead and an
+error only once both have passed, because calling a target impossible before the
+event that would make it possible is how a tool talks a player out of a build he
+can actually reach. See `capField` in `packages/engine/src/vision/fields.ts`
 and `examples/stat-caps-2026-09-05.json`.
 
 ---
