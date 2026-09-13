@@ -103,3 +103,5 @@ details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size
 }
 .tab.on { color: inherit; border-bottom-color: #4a7; font-weight: 600; }
 .tab:hover { color: inherit; }
+.inline { font-size: 13px; color: #555; margin-left: 10px; }
+.inline input { margin-right: 5px; }

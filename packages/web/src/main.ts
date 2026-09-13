@@ -264,8 +264,12 @@ function mountEditor() {
 
 function recompute() {
   app.classList.add("busy");
-  // Let the browser paint the busy state before the search blocks the thread.
-  requestAnimationFrame(() => {
+  // A TIMEOUT, NOT requestAnimationFrame. The whole point of the capture pane
+  // is that the player is looking at the GAME, not at this window -- and rAF is
+  // throttled or suspended when the page is not being painted. Advice that only
+  // recomputes while you are watching it recompute is no use to someone playing
+  // on the other monitor.
+  setTimeout(() => {
     const base = scenario.initialState();
     const state = applyEditable(base, edit);
     const t0 = performance.now();
@@ -276,7 +280,7 @@ function recompute() {
     });
     render(r, state, Math.round(performance.now() - t0));
     app.classList.remove("busy");
-  });
+  }, 0);
 }
 
 /**
@@ -310,7 +314,7 @@ tabs.addEventListener("click", (e) => {
  * player typed. Facility levels are read but deliberately not applied -- they
  * belong to the run setup rather than to this turn.
  */
-function applyFromCapture(r: FrameReading): void {
+function applyFromCapture(r: FrameReading, focus: boolean): void {
   edit = applyScan(edit, r);
   lastScan = {
     ok: true,
@@ -325,7 +329,7 @@ function applyFromCapture(r: FrameReading): void {
     ms: 0,
     reading: r,
   };
-  (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
+  if (focus) (tabs.querySelector<HTMLButtonElement>('.tab[data-pane="advice"]'))?.click();
   recompute();
 }
 

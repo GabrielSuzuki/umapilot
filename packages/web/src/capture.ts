@@ -44,7 +44,12 @@ const mounted = new WeakMap<HTMLElement, CaptureHandle>();
 
 export function mountCapture(
   host: HTMLElement,
-  onApply: (reading: FrameReading) => void,
+  /**
+   * Hand a reading to the planner. `focus` is true only when the player asked
+   * for it by pressing the button -- an automatic sync must never yank them to
+   * another tab while they are looking at the game.
+   */
+  onApply: (reading: FrameReading, focus: boolean) => void,
 ): CaptureHandle {
   const already = mounted.get(host);
   if (already) return already;
@@ -58,6 +63,8 @@ export function mountCapture(
       <button id="cap-start" class="go">Share the game window</button>
       <button id="cap-stop" class="go" hidden>Stop</button>
       <button id="cap-apply" class="go" hidden>Use this state in Turn advice</button>
+      <label class="inline"><input type="checkbox" id="cap-auto" checked />
+        keep Turn advice in sync</label>
     </p>
     <div id="cap-status"></div>
     <div class="cols">
@@ -71,6 +78,11 @@ export function mountCapture(
   const statusEl = host.querySelector<HTMLElement>("#cap-status")!;
   const readEl = host.querySelector<HTMLElement>("#cap-read")!;
   const preview = host.querySelector<HTMLCanvasElement>("#cap-preview")!;
+  const autoBox = host.querySelector<HTMLInputElement>("#cap-auto")!;
+
+  /** What was last pushed to the planner, and when -- see the sync rule below. */
+  let lastSyncSig = "";
+  let lastSyncAt = 0;
 
   const video = document.createElement("video");
   video.muted = true; video.playsInline = true;
@@ -106,6 +118,23 @@ export function mountCapture(
    * thing watching a stream, not to the thing reading a picture.
    */
   const recent: Array<string | undefined> = [];
+
+  /**
+   * The last level seen for each facility, carried between frames.
+   *
+   * The reader refuses the SELECTED chip's level on purpose: the game paints an
+   * animated sparkle over it, and a holed glyph matches a different digit
+   * rather than failing loudly (0028). Per frame that refusal is right. Across
+   * a stream it is needlessly lossy, because a facility level does not change
+   * while the player is looking at it -- it changes on the fourth use of that
+   * facility, between turns.
+   *
+   * So the level read while a chip was NOT selected is still true when it
+   * becomes selected, and remembering it costs nothing. It is shown marked, so
+   * a carried value is never mistaken for something read from the frame in
+   * front of you.
+   */
+  const rememberedLevels = new Map<string, number>();
   function vote(v: string | undefined): string | undefined {
     recent.push(v);
     if (recent.length > 5) recent.shift();
@@ -210,6 +239,26 @@ export function mountCapture(
     lastReading = r;
     const voted = vote(r.selected);
     applyBtn.hidden = false;
+    for (const s2 of STATS) {
+      const lv = r.facilityLevels[s2];
+      if (lv !== undefined) rememberedLevels.set(s2, lv);
+    }
+
+    // AUTO-SYNC. The player asked for something that watches the game, and a
+    // button they have to press is not that. But `plan()` costs hundreds of
+    // milliseconds and blocks the thread, so it cannot run at capture rate.
+    // Both constraints are satisfied by syncing on CHANGE rather than on
+    // frames: the stats only move when a turn is taken, so a material change is
+    // rare, and rate-limiting it stops a flickering read from thrashing the
+    // search.
+    if (autoBox.checked) {
+      const sig = STATS.map((s2) => r.stats[s2] ?? "-").join(",") + "|" + (r.skillPts ?? "-");
+      const now = performance.now();
+      if (sig !== lastSyncSig && now - lastSyncAt > 3000) {
+        lastSyncSig = sig; lastSyncAt = now;
+        onApply(r, false);
+      }
+    }
 
     const row = (k: string, v: unknown) =>
       `<div class="out"><span>${k}</span><span class="n">${v === undefined ? "—" : esc(String(v))}</span></div>`;
@@ -221,7 +270,12 @@ export function mountCapture(
       row("concert in", r.concertIn),
       row("skill points", r.skillPts),
       ...STATS.map((s) => row(s, r.stats[s])),
-      ...STATS.map((s) => row(`${s} lvl`, r.facilityLevels[s])),
+      ...STATS.map((s) => {
+        const live = r.facilityLevels[s];
+        if (live !== undefined) return row(`${s} lvl`, live);
+        const kept = rememberedLevels.get(s);
+        return row(`${s} lvl`, kept === undefined ? undefined : `${kept} (remembered)`);
+      }),
       r.chipLevelsHidden
         ? `<p class="note">No chip printed a level — this is what summer camp looks like.</p>` : "",
     ].join("");
@@ -229,7 +283,7 @@ export function mountCapture(
 
   startBtn.addEventListener("click", () => void start());
   stopBtn.addEventListener("click", () => stop());
-  applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading); });
+  applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading, true); });
 
   const handle: CaptureHandle = { stop };
   mounted.set(host, handle);
