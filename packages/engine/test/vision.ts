@@ -16,7 +16,7 @@ import { GLYPH_W, GLYPH_H, segmentGlyphs, readNumber, matchGlyph, MAX_GLYPH_DIST
 import { GLYPH_TEMPLATES } from "../src/vision/glyphs";
 import { inkMask, whiteDistance, fractionOfMaxThreshold, lumaStdDev, type RgbaImage } from "../src/vision/image";
 import { probeScreen, findPanel } from "../src/vision/classify";
-import { turnCandidates, resolveTurn, calendarFor } from "../src/vision/turn";
+import { turnCandidates, resolveTurn, calendarFor, calendarTurn } from "../src/vision/turn";
 import { readFrame } from "../src/vision/read";
 import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X, isPanelShaped, cropImage } from "../src/vision/layout";
 import { chipLevelField, capField, fieldGlyphs } from "../src/vision/fields";
@@ -204,6 +204,25 @@ console.log("\nvision: which turn is this");
 
   check("the calendar and the countdown agree on the real frame",
     turnCandidates(2).includes(34) && calendarFor(34) === "Classic Late May");
+
+  // The round trip is the point: a label read off the screen has to come back
+  // as the same turn, or a finding gets written up against the wrong one. The
+  // stat caps move at turns 31 and 55, and were reported as moving on "the
+  // first turn of a new year", which is 25 and 49.
+  let roundTrip = true;
+  for (let t = 1; t <= 72; t++) if (calendarTurn(calendarFor(t)) !== t) roundTrip = false;
+  check("every turn survives the trip through its calendar label", roundTrip);
+
+  check("the game's own spelling parses, not just ours",
+    calendarTurn("Classic Year Early Apr") === 31 &&
+    calendarTurn("Senior Year Early Apr") === 55 &&
+    calendarTurn("Classic Year Early Jan") === 25,
+    "the game prints \"Year\"; calendarFor does not");
+
+  check("a label with no date in it returns nothing, not a guess",
+    calendarTurn("Junior Year Pre-Debut") === null,
+    "the pre-debut frames are anchored separately -- and a caller that treats " +
+    "this as \"no calendar field\" is how a diagnostic measured 45 turns as 55");
 }
 
 console.log("\nvision: finding the panel in a bigger capture");

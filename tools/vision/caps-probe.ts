@@ -8,8 +8,11 @@
  *
  * They move. Speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power
  * 1332 -> 1337 -> 1343, wit 1300 -> 1300 -> 1304, guts 1500 throughout. Both
- * steps land on the first turn of a new year -- the same boundary at which the
- * performance-point cap goes 300 -> 350 -> 400.
+ * steps land on career turn 31 and career turn 55 -- Classic Early Apr and
+ * Senior Early Apr. NOT the first turn of a new year, which is what this file
+ * said first: those are turns 25 and 49, and the frames in between read the
+ * earlier values. Not after each concert either (24, 36, 48, 60, 72 -- nothing
+ * moves after 36 or 60), and not every Early Apr (Junior Early Apr is turn 7).
  *
  * HOW IT WAS FOUND WITHOUT LABELS, AND WITHOUT ARGUING IN A CIRCLE. There is no
  * cap column in the hand transcription, so there was nothing to induce cap
@@ -39,6 +42,7 @@
  */
 import { loadManifest, loadPanel, loadLabels, loadCapSegments, applyCapSegments } from "./corpus";
 import { readNumber } from "../../packages/engine/src/vision/segment";
+import { calendarTurn } from "../../packages/engine/src/vision/turn";
 import { capField, fieldGlyphs } from "../../packages/engine/src/vision/fields";
 import { GLYPH_TEMPLATES } from "../../packages/engine/src/vision/glyphs";
 
@@ -76,8 +80,12 @@ for (const f of frames) {
   }
   const changed = got.some((v, i) => v !== null && prev[i] !== null && v !== prev[i]);
   if (changed || f === frames[0]) {
+    // THE TURN NUMBER, not just the calendar string. Printing only the label is
+    // how "Classic Early Apr" got written up as "the first turn of a new year"
+    // -- which is turn 25, where this is turn 31.
     const cal = labels.get(f)?.calendar ?? "";
-    console.log(`  f${String(f).padStart(2)}  ${got.map((v) => (v === null ? "    ?" : String(v).padStart(5))).join(" ")}   ${cal}`);
+    const t = calendarTurn(cal);
+    console.log(`  f${String(f).padStart(2)}  ${got.map((v) => (v === null ? "    ?" : String(v).padStart(5))).join(" ")}   ${t === null ? "  ?" : `t${String(t).padStart(2)}`}  ${cal}`);
   }
   got.forEach((v, i) => { if (v !== null) prev[i] = v; });
 }

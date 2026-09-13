@@ -83,3 +83,29 @@ export function calendarFor(turn: number): string {
   const month = MONTHS[Math.floor((i % 24) / 2)] ?? "Dec";
   return `${year} ${i % 2 === 0 ? "Early" : "Late"} ${month}`;
 }
+
+/**
+ * A calendar label back to a turn number -- the inverse of `calendarFor`.
+ *
+ * IT EXISTS BECAUSE A MISSING NUMBER COST A WRONG CLAIM. The stat-cap finding
+ * was written up as "both steps land on the first turn of a new year" on the
+ * strength of the label reading "Early Apr", in a codebase whose whole business
+ * is turning what the screen says into numbers. Classic Early Apr is turn 31;
+ * the first turn of Classic Year is turn 25; frames at turns 25 through 30 said
+ * so plainly and were never asked. Three copies of this function already existed
+ * in gitignored diagnostics, so the arithmetic was available and just not to
+ * hand.
+ *
+ * Returns null for a label with no date in it, of which the corpus has one that
+ * matters: "Junior Year Pre-Debut". Callers anchor those separately -- and a
+ * caller that quietly treats null as "no calendar field" is the bug that made a
+ * diagnostic measure 45 turns while reporting 55.
+ */
+export function calendarTurn(label: string): number | null {
+  const m = /(Junior|Classic|Senior)\s+(?:Year\s+)?(Early|Late)\s+([A-Za-z]{3})/.exec(label);
+  if (!m) return null;
+  const year = YEARS.indexOf(m[1] as (typeof YEARS)[number]);
+  const month = MONTHS.indexOf(m[3] as (typeof MONTHS)[number]);
+  if (year < 0 || month < 0) return null;
+  return year * 24 + month * 2 + (m[2] === "Early" ? 1 : 2);
+}

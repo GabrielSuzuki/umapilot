@@ -134,7 +134,8 @@ export function fieldGlyphs(panel: RgbaImage, spec: FieldSpec): Glyph[] {
  * per-run constant, set by legacy at the Legacy Select screen, and the captured
  * career disproves it: speed went 1625 -> 1630 -> 1635, stamina 1332 -> 1336 ->
  * 1342, power 1332 -> 1337 -> 1343, wit 1300 -> 1300 -> 1304, guts 1500
- * throughout. Both steps land on the first turn of a new year. See
+ * throughout. Both steps land on Early Apr -- turns 31 and 55 -- and nothing
+ * moves at Junior Early Apr or after any of the five concerts. See
  * `tools/vision/caps-probe.ts`.
  */
 export function capField(i: number): FieldSpec {

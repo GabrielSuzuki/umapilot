@@ -80,36 +80,57 @@ details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size
   border-radius: 10px;
   padding: 22px 14px;
   text-align: center;
-  color: #666;
+  color: var(--muted);
   cursor: pointer;
   font-size: 13px;
 }
-.drop.over { border-color: #4a7; background: #f2fbf6; }
+.drop.over { border-color: var(--good); background: color-mix(in srgb, var(--good) 12%, var(--bg)); }
 .drop.busy { opacity: 0.6; cursor: progress; }
 .scanok { font-size: 13px; margin: 8px 0 0; }
-.scanno { font-size: 13px; margin: 6px 0 0; color: #8a4b00; }
+.scanno { font-size: 13px; margin: 6px 0 0; color: var(--warn); }
 
+/*
+ * Every button in the app is a `.go`, and this rule used to hard-code
+ * `background: #fff` with no `color`. In dark mode that is #eceaf2 text on a
+ * white button: a white bar with nothing written on it. The player reported it
+ * as "I have no idea what any of the white bar buttons do since they have no
+ * labels", and then clicked the unreadable one, which was "Back to the captured
+ * career", and lost the deck he had just entered.
+ *
+ * Both halves of that are fixed -- the button reads in both themes, and the
+ * destructive one now says so before it fires -- but the lesson is the rule:
+ * a hard-coded colour inside a themed stylesheet is not a small inconsistency,
+ * it is an element that vanishes in one of the two themes.
+ */
 .go {
   font: inherit; padding: 8px 16px; border-radius: 8px;
-  border: 1px solid var(--line, #d7d7de); background: #fff; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  cursor: pointer;
 }
-.go:hover { background: #f4f4f7; }
+.go:hover { border-color: var(--accent); }
+.go.danger { border-color: var(--bad); color: var(--bad); }
+.go.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
 #preview { max-width: 100%; border-radius: 8px; background: #111; }
 
 .tabs { display: flex; gap: 6px; margin: 4px 0 16px; border-bottom: 1px solid var(--line, #d7d7de); }
 .tab {
   font: inherit; padding: 8px 14px; border: 0; background: transparent; cursor: pointer;
-  border-bottom: 2px solid transparent; color: #666;
+  border-bottom: 2px solid transparent; color: var(--muted);
 }
-.tab.on { color: inherit; border-bottom-color: #4a7; font-weight: 600; }
+.tab.on { color: inherit; border-bottom-color: var(--good); font-weight: 600; }
 .tab:hover { color: inherit; }
-.inline { font-size: 13px; color: #555; margin-left: 10px; }
+.inline { font-size: 13px; color: var(--muted); margin-left: 10px; }
 .inline input { margin-right: 5px; }
 .pick { margin: 6px 6px 0 0; font-size: 13px; padding: 5px 10px; }
-.slot { display: flex; gap: 8px; margin: 6px 0; }
-.slot select { font: inherit; padding: 4px; }
+.slot { display: flex; gap: 8px; margin: 6px 0; align-items: center; }
+.slot select, .slot input { font: inherit; padding: 5px 7px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 .slot .cardpick { flex: 1; min-width: 0; }
+/* A name that matches no card: the slot is empty and the player should see why. */
+.slot .cardpick.unmatched { border-color: var(--bad); }
+.slot .found { font-size: 12px; color: var(--muted); min-width: 62px; }
+.slot .found.no { color: var(--bad); }
 .setrow { display: flex; gap: 10px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
-.setrow > span { min-width: 110px; font-size: 13px; color: #666; }
-.setrow label { font-size: 12px; color: #666; }
+.setrow > span { min-width: 110px; font-size: 13px; color: var(--muted); }
+.setrow label { font-size: 12px; color: var(--muted); }
 .setrow input { width: 68px; margin-left: 4px; font: inherit; padding: 3px; }

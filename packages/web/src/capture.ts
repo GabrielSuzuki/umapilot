@@ -328,7 +328,31 @@ export function mountCapture(
    * turn 34 -- it offers the five calendars the game itself prints and takes one
    * click. After that the career is tracked forward and it never asks again.
    */
-  function renderTurn(r: FrameReading): void {
+  /**
+   * What the turn panel currently shows, so it is not rebuilt twice a second.
+   *
+   * `renderTurn` used to rewrite its own innerHTML on every frame. The panel
+   * contains a `<select>` of all 72 turns, and a select that is destroyed and
+   * recreated every ~500 ms cannot be used at all: the dropdown closes under the
+   * player's cursor before he can scroll it. He reported it as "the which turn
+   * are you on does not function since I am kicked out of it every update",
+   * which is exactly what it was.
+   *
+   * The fix is to redraw only when the answer would differ -- the panel's whole
+   * content is a function of the known turn and the concert countdown, and both
+   * hold still for a whole turn at a time.
+   */
+  let turnSig = "";
+
+  function renderTurn(r: FrameReading, force = false): void {
+    // A rebuild while the player is inside the control is the bug itself, so it
+    // is refused outright even if the signature moved. `force` is the one
+    // exception: answering the question is the moment the panel MUST redraw,
+    // and the control the player just used still has focus.
+    if (!force && turnEl.contains(document.activeElement)) return;
+    const sig = `${knownTurn ?? ""}|${r.concertIn ?? ""}`;
+    if (sig === turnSig && !force) return;
+    turnSig = sig;
     if (knownTurn !== null) {
       turnEl.innerHTML = `<p class="note">Career turn <strong>${knownTurn}</strong> &mdash;
         ${esc(calendarFor(knownTurn))}, ${72 - knownTurn} turns left in the career.</p>`;
@@ -359,7 +383,8 @@ export function mountCapture(
 
   const setTurn = (t: number): void => {
     knownTurn = t;
-    if (lastReading) { renderTurn(lastReading); onApply(lastReading, knownTurn, false); }
+    (document.activeElement as HTMLElement | null)?.blur();
+    if (lastReading) { renderTurn(lastReading, true); onApply(lastReading, knownTurn, false); }
   };
   turnEl.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".pick");

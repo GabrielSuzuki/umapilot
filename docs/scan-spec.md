@@ -112,11 +112,35 @@ captured career (`tools/vision/caps-probe.ts`):
 | Guts    | 1500 | 1500 | 1500 |
 | Wit     | 1300 | 1300 | 1304 |
 
-Both steps land on the first turn of a new year — the same boundary at which the
-performance-point cap goes 300 → 350 → 400, which the transcription had already
-recorded without anyone connecting the two. What raises them is not known, and
-the steps are not a flat bonus or a clean percentage: guts never moves and wit
-moves once.
+**When, exactly.** Mapping the bracketing frames to career turns: the caps hold
+at the Legacy Select values through turn 30 and read the second column at turn
+31; they hold the second column through turn 54 and read the third at turn 55.
+Turns 31 and 55 are **Classic Early Apr** and **Senior Early Apr**.
+
+That rules out the two obvious explanations, including the one this document
+first offered:
+
+- **Not "the first turn of a new year"** — that is turn 25 and turn 49, and
+  frames at turns 25–30 and 49–54 read the *old* caps. This was written here as
+  fact and was wrong; it came from the calendar string saying "Apr" and nobody
+  converting it to a turn number.
+- **Not "after each concert"** — the concerts are at 24, 36, 48, 60, 72. Turns 31
+  and 55 are seven turns after two of them, and nothing moves after the concerts
+  at 36 or 60. Frames at turns 37–43 read the same caps as turn 31, and turn 61
+  reads the same as turn 55.
+- **Not every Early Apr either** — Junior Early Apr is turn 7, and every frame
+  from turn 1 to turn 30 reads the Legacy Select caps unchanged.
+
+So: twice in a career, at Early Apr of the Classic and Senior years. What causes
+it is unknown, and the sizes are not a flat bonus or a clean percentage — guts
+never moves and wit moves once.
+
+The player's own account is *"after concerts the stat cap is raised as well based
+on stat inherits"*. The **inherits** half fits in one place — guts had a legacy
+bonus of 0 (cap 1500 = the scenario base) and is the one stat that never rises —
+and fails in another: wit also had a bonus of 0 (1300 = base) and still went to
+1304. The **after concerts** half does not fit the turn numbers at all. Recorded
+here as stated, next to the measurement that disagrees, rather than resolved.
 
 Three witnesses, none of them the OCR that proposed the numbers: the player's
 Legacy Select transcription for the first column; his own note on frame 59

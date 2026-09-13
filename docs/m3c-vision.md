@@ -288,10 +288,20 @@ is now read off all 58 training frames by `tools/vision/caps-probe.ts`:
 | Guts | 1500 | 1500 | 1500 |
 | Wit | 1300 | 1300 | 1304 |
 
-Both steps land on the first turn of a new year. `scan-spec.md` had recorded
-caps as per-*run* — set by legacy, read once off Legacy Select — and that is the
-kind of claim nothing re-checks, because a constant is read once by definition.
+Converted to career turns, the steps are at **turn 31 and turn 55** — Classic
+Early Apr and Senior Early Apr. `scan-spec.md` had recorded caps as per-*run* —
+set by legacy, read once off Legacy Select — and that is the kind of claim
+nothing re-checks, because a constant is read once by definition.
 `validateTarget` and `statOutlook` were both running on it.
+
+**This section first said "the first turn of a new year", and that was wrong.**
+The first turn of Classic Year is turn 25, and frames at turns 25–30 read the old
+caps. The claim came from reading "Early Apr" off the calendar string and never
+converting it to a number — in a document whose whole subject is converting
+what the screen says into numbers. The player's own explanation ("after concerts,
+based on stat inherits") does not survive the conversion either: the concerts are
+at 24, 36, 48, 60 and 72, and nothing moves after 36 or 60. See `scan-spec.md`
+for what does and does not fit.
 
 ### How it was read with no labels to induce from
 

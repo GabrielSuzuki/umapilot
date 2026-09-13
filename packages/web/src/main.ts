@@ -348,7 +348,7 @@ function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean):
   // THE CAPS ARE NOT CONSTANT. They were treated as a per-run number read once
   // off Legacy Select until the cap row was read on all 58 captured training
   // frames: speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power
-  // 1332 -> 1337 -> 1343, both steps on the first turn of a new year. So every
+  // 1332 -> 1337 -> 1343, both steps on Early Apr, turns 31 and 55. So every
   // frame offers its caps to the setup, which takes them only when they rise
   // and only then pays for a scenario rebuild.
   setupPane?.setCaps(r.statCaps);
