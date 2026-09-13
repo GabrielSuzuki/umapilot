@@ -39,22 +39,53 @@ the labelled frames in order and taking a frame only when it teaches an unseen
 
 ## What it reads, and how often it is right
 
-Held out — the 59 labelled frames that taught no template:
+**Measured by 5-fold cross-validation**, not by a held-out split. The split was
+tried first and could not be made to work: the digits are badly imbalanced —
+chip level 1 appears 96 times in the corpus and level 3 eight times — so a test
+set large enough to mean anything leaves the rare digits one or two training
+samples, and a template averaged from one sighting is a template of one frame's
+anti-aliasing. Measured: chip level 3 had a single sample and read **13%**.
+Chasing ten samples each instead consumed 69 of 75 frames and left six to test
+on. Neither is a measurement.
+
+k-fold dissolves the choice — every frame is tested by templates that never saw
+it, and every template is built from all samples but one fold's. Folds are
+interleaved by frame order rather than contiguous, because the corpus is one
+career in sequence and contiguous blocks would test early-career templates on
+late-career glyphs.
 
 | field | n | read | correct | **wrong** |
 |---|---:|---:|---:|---:|
-| skillPts | 26 | 100% | 100% | **0** |
-| turnsLeft | 49 | 86% | 86% | **0** |
-| chipLevel guts | 31 | 100% | 100% | **0** |
-| chipLevel wit | 31 | 74% | 74% | **0** |
-| concertIn | 38 | 74% | 74% | **0** |
-| chipLevel power | 31 | 55% | 55% | **0** |
-| chipLevel speed | 31 | 45% | 45% | **0** |
-| chipLevel stamina | 31 | 35% | 35% | **0** |
-| **total** | **268** | **72%** | **72%** | **0** |
+| skillPts | 28 | 100% | 100% | **0** |
+| concertIn | 54 | 89% | 89% | **0** |
+| turnsLeft | 69 | 88% | 88% | **0** |
+| chipLevel | 250 | 70% | 69% | **1** |
+| **total** | **401** | **78%** | **77%** | **1** |
 
-End to end, over the whole corpus: **screen classification 75/75**, selected
-facility 45% read and 0 wrong, facility levels 70% read and 0 wrong.
+**That 1 is a correction.** An earlier single-split run reported zero wrong, and
+zero was the wrong number — the split was small enough to miss it. The misread
+is frame 51: a speed level 3 read as a 2, with the surrounding frames and the
+transcription both saying 3.
+
+Cross-validation also found a bug an average had hidden. `turnsLeft` sat at 74%
+and looked like ordinary noise; broken down per GLYPH, the values 10, 11 and 12
+read **zero** — 11 of 69 cases. The box had been fitted to a single digit, so a
+two-digit counter had its leading 1 clipped and its trailing 0 truncated.
+Widening it took the field to 88%.
+
+### End to end, through `readFrame`
+
+| | result |
+|---|---|
+| screen classification | **75 / 75** |
+| selected facility | **58 / 58**, 0 wrong |
+| facility levels | 145 / 192 attempted (76%), **0 wrong** |
+
+The two tables disagree about `chipLevel` on purpose. The first measures the
+glyph reader asked to read every chip. The second measures the assembled reader,
+which **declines to read the selected chip's level at all** — see below. The
+field reader still misreads a sparkled digit; the assembled reader does not ask
+it to.
 
 **The column that matters is the last one.** The two failure modes are not
 comparable and the reader is tuned accordingly:
@@ -63,16 +94,38 @@ comparable and the reader is tuned accordingly:
 - a **wrong** field is a stat the planner believes, silently, for 72 turns.
 
 So the accept thresholds are not set to maximise accuracy. `calibrate.ts`
-sweeps both bars over the held-out reads and takes the loosest setting with
-**zero** wrong answers — `maxDistance 0.10`, `maxMargin 0.45`. One notch looser
-buys 3 points of read rate and 3 wrong answers, which is not a trade worth
-making.
+sweeps both bars and takes the loosest setting with zero wrong answers —
+`maxDistance 0.10`, `maxMargin 0.45`.
 
-The remaining 28% is concentrated, not diffuse: it is mostly the bare vertical
-bar the game draws for facility level **1**, whose normalised bitmap is thin
-enough that the runner-up margin test refuses it. That is a known, named gap
-with an obvious attack (a width feature, or an alphabet restricted to 1–5 for
-chip fields), not a mystery.
+## Two things the sparkle decided
+
+The game paints an animated sparkle over the **selected** chip. It is near-white,
+so it does not obscure a digit so much as punch holes in it — and a holed glyph
+does not fail loudly, it matches a different digit. This is not a weakness of
+template matching: the same overlay made a human transcribing these screenshots
+by hand record a 3 as a 5, which had to be corrected in `replay-validation.md`
+Part 3.
+
+**Selection is read from the chevrons, not the digit.** The first approach read
+the selected chip's level at its raised offset and inferred the selection from
+which chip answered — 45%, because the sparkle sits exactly there. The yellow
+chevron stack beneath the selected chip has no such problem: large, saturated,
+fixed position, present under exactly one chip, nothing else on screen like it.
+**58 of 58**, including summer-camp turns where the chips hide their levels
+entirely and the digit approach could not have worked at all.
+
+Its gates were guesses and one was wrong. Requiring the winner to beat the
+runner-up by 2× cost 7 of 58 reads and prevented nothing — two chips can sit at
+a ratio of 1.03 and plain argmax still picks correctly. The floor earns its
+place: the weakest true chevron score is 0.31, so 0.05 is fifteen times clear
+and still refuses a frame with no chevrons.
+
+**The selected chip's level is not read.** That one position is where the
+sparkle lives and where the only misread came from. Refusing it takes end-to-end
+misreads to zero, and it is cheap now that the chevrons identify the chip
+exactly — the other four are still read. The lesson generalises past this
+module: the digit was the obvious signal because it was the one already being
+read, not because it was the best one.
 
 ## Three things the pixels forced
 

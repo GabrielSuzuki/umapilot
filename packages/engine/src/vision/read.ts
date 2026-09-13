@@ -9,7 +9,7 @@
  */
 import type { RgbaImage } from "./image";
 import { readNumber } from "./segment";
-import { FIELDS, statField, chipLevelField, fieldGlyphs } from "./fields";
+import { FIELDS, statField, chipLevelField, fieldGlyphs, selectedFacility } from "./fields";
 import { GLYPH_TEMPLATES } from "./glyphs";
 import { probeScreen, type ScreenProbe } from "./classify";
 import { STATS, type Stat } from "../../../data/src/types";
@@ -25,7 +25,7 @@ export interface FrameReading {
   /** Which facility's chip is raised, if exactly one could be identified. */
   selected?: Stat;
   /**
-   * True when no chip printed a level at all.
+   * True when none of the unselected chips printed a level.
    *
    * This is summer camp, and it is the reason this flag exists rather than the
    * levels simply coming back empty. During camp the game hides every chip's
@@ -56,21 +56,36 @@ export function readFrame(panel: RgbaImage): FrameReading {
     if (v !== undefined) stats[STATS[i]!] = v;
   }
 
-  // WHICH CHIP IS SELECTED, without reading a word.
+  // WHICH CHIP IS SELECTED comes from the chevrons under it, not from its
+  // level digit -- see `selectedFacility`. The digit approach managed 45%
+  // because the game paints an animated sparkle over the selected chip.
+  const sel = selectedFacility(panel);
+  const selected = sel ? STATS[sel.index] : undefined;
+
+  // THE SELECTED CHIP'S LEVEL IS NOT READ, AND THAT IS THE POINT.
   //
-  // The selected chip rides ~40px higher than the others and is set larger, so
-  // its level digit is legible at the raised offset and absent at the resting
-  // one. Trying both positions and seeing which one yields a digit identifies
-  // the selection using only machinery that already exists -- no letter
-  // templates, no colour heuristic that a new facility skin would break.
+  // The game paints an animated sparkle over the selected chip. It is near-white,
+  // so it punches holes in the digit, and a holed glyph does not fail loudly --
+  // it matches a different digit. Measured: one misread in 401 cross-validated
+  // field reads, frame 51, a sparkled speed 3 read as a 2, with the surrounding
+  // frames and the transcription agreeing it is a 3. The same overlay is what
+  // turned a 3 into a 5 for a human reading these screenshots by hand
+  // (`replay-validation.md` Part 3), so it is not a weakness of this method.
+  //
+  // Refusing that one position takes the misreads to zero. The trade is
+  // deliberate and is the module's whole stance: a refused field costs one
+  // prompt and is visible; a wrong field is a facility level the planner
+  // believes for the rest of the run, and it changes what every training is
+  // predicted to pay.
+  //
+  // Cheap, too, now that `selectedFacility` identifies the chip from the
+  // chevrons: the position to skip is known exactly, so the other four are
+  // still read at their resting offsets.
   const facilityLevels: Partial<Record<Stat, number>> = {};
-  const raised: Stat[] = [];
   for (let i = 0; i < STATS.length; i++) {
     const stat = STATS[i]!;
-    const atRest = num(chipLevelField(i, false));
-    const atRaised = num(chipLevelField(i, true));
-    if (atRaised !== undefined && atRest === undefined) raised.push(stat);
-    const level = atRest ?? atRaised;
+    if (stat === selected) continue;
+    const level = num(chipLevelField(i, false));
     if (level !== undefined && level >= 1 && level <= 5) facilityLevels[stat] = level;
   }
 
@@ -85,9 +100,7 @@ export function readFrame(panel: RgbaImage): FrameReading {
     ...(skillPts !== undefined ? { skillPts } : {}),
     stats,
     facilityLevels,
-    // Exactly one raised chip is a reading; two is a contradiction and is
-    // reported as no reading rather than as the first one found.
-    ...(raised.length === 1 ? { selected: raised[0]! } : {}),
+    ...(selected !== undefined ? { selected } : {}),
     chipLevelsHidden: Object.keys(facilityLevels).length === 0,
   };
 }

@@ -17,8 +17,9 @@
  */
 import { writeFileSync } from "node:fs";
 import { loadManifest, loadPanel, loadLabels } from "./corpus";
-import { GLYPH_W, GLYPH_H, type Glyph } from "../../packages/engine/src/vision/segment";
-import { FIELDS, statField, chipLevelField, fieldGlyphs, type FieldStyle, type FieldSpec } from "../../packages/engine/src/vision/fields";
+import { GLYPH_W, GLYPH_H } from "../../packages/engine/src/vision/segment";
+import type { FieldStyle } from "../../packages/engine/src/vision/fields";
+import { newAccumulator, harvestFrame } from "./harvest";
 
 const panelDir = process.argv[2] ?? "";
 const outPath = process.argv[3] ?? "tools/vision/glyphs.json";
@@ -29,89 +30,46 @@ const manifest = loadManifest(panelDir);
 const labels = loadLabels("examples/facility-levels-2026-09-05.jsonl");
 const STATS = ["speed", "stamina", "power", "guts", "wit"] as const;
 
-interface Acc { sum: Float64Array; n: number }
-const acc = new Map<string, Acc>();          // `${style}:${digit}` -> accumulator
-const seen = new Map<string, number>();      // how many samples each style saw
+const sharedAcc = newAccumulator();
 let attempted = 0, accepted = 0;
 
-function add(style: FieldStyle, digit: string, g: Glyph): void {
-  const key = `${style}:${digit}`;
-  let a = acc.get(key);
-  if (!a) { a = { sum: new Float64Array(GLYPH_W * GLYPH_H), n: 0 }; acc.set(key, a); }
-  for (let i = 0; i < g.cells.length; i++) a.sum[i]! += g.cells[i]!;
-  a.n++;
-  seen.set(style, (seen.get(style) ?? 0) + 1);
-}
-
-function harvest(panel: ReturnType<typeof loadPanel>, spec: FieldSpec, value: number): void {
-  attempted++;
-  const text = String(value);
-  const glyphs = fieldGlyphs(panel, spec);
-  if (glyphs.length !== text.length) return;   // disagreement: skip, never align
-  accepted++;
-  for (let i = 0; i < glyphs.length; i++) add(spec.style, text[i]!, glyphs[i]!);
-}
-
 /**
- * The induction set is a GREEDY ALPHABET COVER, not a prefix.
+ * SHIPPING templates uses every labelled frame. Measuring them does not.
  *
- * A prefix does not work, and the reason is a property of the data rather than
- * of the method: the corpus is one career in chronological order, so facility
- * level 5 does not exist until turn 45 and a "2" in the concert counter is rare
- * early. Inducing from the first N frames leaves whole digits undefined however
- * large N is made, and making N large to chase them defeats the split.
+ * The two jobs were conflated at first and it cost real accuracy. Holding
+ * frames back to test on starves the rare digits -- chip level 3 appears eight
+ * times in the whole corpus -- and a template averaged from one sighting is a
+ * template of one frame's anti-aliasing: it read 13% of held-out cases.
+ * Chasing ten samples each instead consumed 69 of 75 frames and left six to
+ * test on. Neither is a measurement, and the tension is not resolvable inside
+ * one split.
  *
- * So: walk the labelled frames in order and take a frame ONLY if it contributes
- * a (style, digit) pair not already covered. Every other labelled frame is held
- * out. The result is a small set chosen by what it teaches rather than by where
- * it sits, and the held-out set stays large.
+ * So it is not resolved here. `crossval.ts` reports accuracy by k-fold, where
+ * every frame is tested by templates that never saw it AND every template gets
+ * all the samples but one fold's. This file's only job is to build the best
+ * templates available, which means using everything.
  */
 const labelledFrames = [...labels.keys()].sort((a, b) => a - b);
-const covered = new Set<string>();
 const induceSet: number[] = [];
 let used = 0;
-
-interface Pending { spec: FieldSpec; value: number }
 
 for (const frame of labelledFrames) {
   const ref = manifest.find((m) => m.frame === frame);
   const label = labels.get(frame);
   if (!ref || !label) continue;
-
-  const pending: Pending[] = [];
-  if (typeof label.turnsLeft === "number") pending.push({ spec: FIELDS.turnsLeft, value: label.turnsLeft });
-  if (typeof label.concertIn === "number") pending.push({ spec: FIELDS.concertIn, value: label.concertIn });
-  if (typeof label.skillPts === "number") pending.push({ spec: FIELDS.skillPts, value: label.skillPts });
-  if (label.stats) {
-    for (let i = 0; i < STATS.length; i++) {
-      const v = label.stats[STATS[i]!];
-      if (typeof v === "number") pending.push({ spec: statField(i), value: v });
-    }
-  }
-  if (label.levels && !label.summerCamp) {
-    for (let i = 0; i < 5; i++) {
-      const v = label.levels[i];
-      if (typeof v === "number") pending.push({ spec: chipLevelField(i, label.selected === STATS[i]), value: v });
-    }
-  }
-
-  const teaches = pending.some((p) =>
-    String(p.value).split("").some((d) => !covered.has(`${p.spec.style}:${d}`)));
-  if (!teaches) continue;
-
   const panel = loadPanel(panelDir, ref);
-  for (const p of pending) {
-    harvest(panel, p.spec, p.value);
-    for (const d of String(p.value)) covered.add(`${p.spec.style}:${d}`);
-  }
-  induceSet.push(frame);
-  used++;
+  const r = harvestFrame(panel, label, sharedAcc);
+  attempted += r.attempted;
+  accepted += r.accepted;
+  if (r.accepted > 0) { induceSet.push(frame); used++; }
 }
 
-const templates = [...acc.entries()].map(([key, a]) => {
-  const [style, label] = key.split(":") as [FieldStyle, string];
-  return { style, label, samples: a.n, cells: Array.from(a.sum, (v) => Number((v / a.n).toFixed(4))) };
-}).sort((a, b) => a.style.localeCompare(b.style) || a.label.localeCompare(b.label));
+const templates = sharedAcc.templates().map((t) => ({
+  style: t.style as FieldStyle,
+  label: t.label,
+  samples: t.samples,
+  cells: Array.from(t.cells, (v) => Number(v.toFixed(4))),
+}));
 
 writeFileSync(outPath, JSON.stringify({ glyphW: GLYPH_W, glyphH: GLYPH_H, induceFrames: induceSet, templates }, null, 1));
 
@@ -136,9 +94,9 @@ writeFileSync(tsPath, `/**
  * already transcribed, for the same reason the dataset is extracted from his
  * own master.mdb: no font is redistributed and no art is scraped.
  *
- * Induction frames (greedy cover of the digit alphabet): ${induceSet.join(", ")}.
- * Everything else in the corpus is held out, and is what the accuracy in
- * \`docs/m3c-vision.md\` is measured on.
+ * Built from all ${used} labelled frames that yielded a glyph. Accuracy is NOT
+ * measured against a held-out slice of these -- holding frames back starves the
+ * rare digits. See \`tools/vision/crossval.ts\` and \`docs/m3c-vision.md\`.
  */
 import { GLYPH_W, GLYPH_H, type Template } from "./segment";
 import type { FieldStyle } from "./fields";
@@ -164,8 +122,7 @@ export const GLYPH_TEMPLATES: ReadonlyMap<FieldStyle, Template[]> = (() => {
 `);
 console.log(`-> ${tsPath}`);
 
-console.log(`induction frames (greedy alphabet cover): ${induceSet.length} of ${labelledFrames.length} labelled -> ${induceSet.join(", ")}`);
-console.log(`held out for validation: ${labelledFrames.length - induceSet.length}`);
+console.log(`templates built from all ${used} labelled frames that yielded a glyph (accuracy comes from crossval.ts, not from a held-out split here)`);
 console.log(`field reads attempted ${attempted}, accepted ${accepted} (${((100 * accepted) / Math.max(attempted, 1)).toFixed(0)}%)`);
 for (const style of new Set(templates.map((t) => t.style))) {
   const ts = templates.filter((t) => t.style === style);

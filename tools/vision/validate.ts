@@ -113,6 +113,36 @@ for (const k of order) {
 }
 console.log(`  ${"TOTAL".padEnd(20)} ${String(N).padStart(4)} ${pct(R, N)} ${pct(C, N).padStart(8)} ${String(W).padStart(6)}`);
 
+// PER-DIGIT, because "the speed chip is weak" turned out to be the wrong
+// reading of the same data. The failures track the DIGIT, not the facility: a
+// template averaged from one sighting is a template of one frame's noise, and
+// the greedy alphabet cover stops at the first frame that teaches a digit.
+console.log("\nchip levels by digit (the induction set holds very different sample counts per digit):");
+{
+  const byDigit = new Map<string, { n: number; read: number }>();
+  for (const ref of manifest) {
+    const label = labels.get(ref.frame);
+    if (!label?.levels || induced.has(ref.frame) || label.summerCamp) continue;
+    for (let i = 0; i < 5; i++) {
+      const want = label.levels[i];
+      if (typeof want !== "number") continue;
+      const k = String(want);
+      const v = byDigit.get(k) ?? { n: 0, read: 0 };
+      v.n++;
+      const spec = chipLevelField(i, label.selected === STATS[i]);
+      if (readNumber(fieldGlyphs(loadPanelCached(ref.frame), spec), byStyle.get(spec.style) ?? [])) v.read++;
+      byDigit.set(k, v);
+    }
+  }
+  const samples = new Map(raw.templates.filter((t) => t.style === "smallChip" || t.style === "bigChip")
+    .map((t) => [`${t.style}:${t.label}`, t.samples]));
+  for (const k of [...byDigit.keys()].sort()) {
+    const v = byDigit.get(k)!;
+    console.log(`  level ${k}: ${String(v.read).padStart(3)}/${String(v.n).padStart(3)} read (${pct(v.read, v.n)})` +
+      `   induction samples: smallChip ${samples.get(`smallChip:${k}`) ?? 0}, bigChip ${samples.get(`bigChip:${k}`) ?? 0}`);
+  }
+}
+
 console.log("\ndisagreements (reader vs transcription -- both are suspects):");
 let shown = 0;
 for (const k of order) {

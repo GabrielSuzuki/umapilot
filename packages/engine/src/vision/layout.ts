@@ -43,8 +43,21 @@ export const LAYOUT = {
   /** "Junior Year Early Jan" / "Junior Year Pre-Debut". */
   calendar: R(236, 36, 392, 56),
 
-  /** The big turn counter. One or two digits, purple on white. */
-  turnsLeft: R(126, 57, 176, 101),
+  /**
+   * The big turn counter. One or two digits, purple on white.
+   *
+   * The box was fitted to a single digit and every TWO-digit value failed --
+   * 0% on 10, 11 and 12 across the corpus, which is 11 of the 69 labelled
+   * turn counters. A "10" starts 5px left of where a "7" starts and ends 1px
+   * past where the box stopped, so the leading 1 was clipped and the trailing
+   * 0 truncated. Fitted to the widest value now, stopping short of the
+   * "turn(s)" caption at x 178.
+   *
+   * Cross-validation is what surfaced this. A per-field average said "turnsLeft
+   * 74%" and looked like ordinary noise; a per-GLYPH breakdown said 10, 11 and
+   * 12 read zero, which is not noise but a box.
+   */
+  turnsLeft: R(118, 57, 177, 101),
 
   /**
    * "Concert in N turn(s)" -- N only.
@@ -90,6 +103,13 @@ export const LAYOUT = {
   chipLevelOffset: R(-46, 35, 46, 58),
   /** The selected chip rides ~32px higher and its label is restyled. */
   selectedChipRise: 32,
+  /**
+   * The chevron stack under the selected facility's chip.
+   *
+   * A band, not a box per chip, because all that matters is which chip has
+   * saturated yellow beneath it -- the chevrons appear under exactly one.
+   */
+  chevronBand: { y0: 940, y1: 1000, halfWidth: 40 },
 
   /** The performance-point column: five rows of "N / cap". */
   tokenColumnX: R(28, 0, 110, 0),

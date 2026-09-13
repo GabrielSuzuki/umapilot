@@ -4,6 +4,7 @@
  */
 import type { RgbaImage, Box } from "./image";
 import { inkMask, fractionOfMaxThreshold } from "./image";
+import type { RgbaImage as _Rgba } from "./image";
 import { segmentGlyphs, type Glyph, type SegmentOptions } from "./segment";
 import {
   LAYOUT, REF_W, REF_H, scaleBox, statValueBox, chipLevelBox, type RefBox,
@@ -108,3 +109,57 @@ export function fieldGlyphs(panel: RgbaImage, spec: FieldSpec): Glyph[] {
 }
 
 export { REF_W, REF_H };
+
+/**
+ * Which facility is selected, from the chevrons rather than the digits.
+ *
+ * The first approach read the selected chip's level digit at its raised offset
+ * and inferred the selection from which chip answered there. It worked and it
+ * was fragile: 45% on held-out frames, because the game paints an animated
+ * SPARKLE over the selected chip and the sparkle is near-white, so it punches
+ * holes in the glyph and the segmenter returns fragments. That is the same
+ * overlay that corrupted the hand transcription in `replay-validation.md`
+ * Part 3, where a sparkle on a level digit turned a 3 into a 5.
+ *
+ * The chevron stack under the selected chip has no such problem. It is large,
+ * saturated yellow, in a fixed place, present under exactly one chip, and
+ * nothing else on the screen looks like it. 58 of 58 labelled frames, including
+ * summer camp turns where the chips hide their levels entirely -- which is the
+ * case the digit approach could never have handled at all.
+ *
+ * The lesson generalises past this function: the digit was the obvious signal
+ * because it was the one already being read, not because it was the best one.
+ */
+export function selectedFacility(panel: RgbaImage): { index: number; score: number } | null {
+  const sx = panel.width / REF_W, sy = panel.height / REF_H;
+  const { y0, y1, halfWidth } = LAYOUT.chevronBand;
+  const scores = LAYOUT.chipCentreX.map((cx) => {
+    let hits = 0, n = 0;
+    const xa = Math.round((cx - halfWidth) * sx), xb = Math.round((cx + halfWidth) * sx);
+    const ya = Math.round(y0 * sy), yb = Math.round(y1 * sy);
+    for (let y = Math.max(0, ya); y < Math.min(panel.height, yb); y++) {
+      let i = (y * panel.width + Math.max(0, xa)) * 4;
+      for (let x = Math.max(0, xa); x < Math.min(panel.width, xb); x++, i += 4) {
+        if (panel.data[i]! > 200 && panel.data[i + 1]! > 150 && panel.data[i + 2]! < 120) hits++;
+        n++;
+      }
+    }
+    return n === 0 ? 0 : hits / n;
+  });
+
+  let best = -1, bestI = -1, second = -1;
+  scores.forEach((s, i) => {
+    if (s > best) { second = best; best = s; bestI = i; }
+    else if (s > second) second = s;
+  });
+  // A FLOOR, AND NO MARGIN. Both were guesses at first and the margin was
+  // wrong: swept over the corpus, requiring the winner to beat the runner-up by
+  // 2x cost 7 of 58 reads and prevented nothing, because the two can sit at a
+  // ratio of 1.03 and plain argmax still picks correctly. The floor is the gate
+  // that earns its place -- the weakest true chevron score seen is 0.31, so
+  // 0.05 is fifteen times clear of it and still refuses a frame with no
+  // chevrons at all.
+  if (bestI < 0 || best < 0.05) return null;
+  void second;
+  return { index: bestI, score: best };
+}
