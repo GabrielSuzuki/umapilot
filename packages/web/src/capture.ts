@@ -132,9 +132,21 @@ export function mountCapture(
   let boardTurn: number | null = null;
   /** Stats as of the last board reset -- a turn taken is a stat that moved. */
   let boardStats = "";
-  /** The previous frame's rail, so a mid-animation reading is never recorded. */
-  let railFacility: string | undefined;
-  let railPending = "";
+  /** Turns-left as of the last board reset; it moves on every turn, rest included. */
+  let boardLeft: number | null = null;
+  /**
+   * How many frames a facility's rail must hold still before it is believed.
+   *
+   * Three, at roughly two frames a second. The portraits slide in when a
+   * facility opens, so one frame can catch two cards as one; three identical
+   * readings in a row is a screen that has settled.
+   */
+  const RAIL_CONFIRM_FRAMES = 3;
+  /** Facilities already read and frozen for this turn. */
+  let lockedFacilities = new Set<Stat>();
+  let confirmFacility: Stat | undefined;
+  let confirmSig = "";
+  let confirmCount = 0;
 
   /**
    * The located panel, kept between frames.
@@ -223,7 +235,8 @@ export function mountCapture(
     frames = 0; panelsFound = 0; blackFrames = 0;
     locked = null; lockMisses = 0; recent.length = 0;
     knownTurn = null; pendingSig = ""; pendingCount = 0;
-    board = {}; boardTurn = null; boardStats = ""; railFacility = undefined; railPending = "";
+    board = {}; boardTurn = null; boardStats = ""; boardLeft = null;
+    lockedFacilities = new Set(); confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
     timer = window.setInterval(() => void tick(), 500);
   }
 
@@ -318,34 +331,64 @@ export function mountCapture(
     const statSig = STATS.map((s2) => r.stats[s2] ?? "-").join(",");
     const turnMoved = knownTurn !== null && boardTurn !== null && knownTurn !== boardTurn;
     const statsMoved = boardStats !== "" && statSig !== boardStats && !statSig.includes("-");
-    if (turnMoved || statsMoved) { board = {}; }
+    // A THIRD SIGNAL, because the first two both miss a rest. The career turn
+    // needs the concert countdown, which is not on every frame; the stats do
+    // not move on a turn spent resting or on an outing. `turnsLeft` counts down
+    // every single turn and is on screen the whole time. It jumps UP when a
+    // goal is met and the next one starts, which is also a turn boundary, so
+    // any change at all resets the board.
+    const leftMoved = boardLeft !== null && r.turnsLeft !== undefined && r.turnsLeft !== boardLeft;
+    if (turnMoved || statsMoved || leftMoved) {
+      board = {};
+      lockedFacilities = new Set();
+      confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
+    }
     if (knownTurn !== null) boardTurn = knownTurn;
     if (!statSig.includes("-")) boardStats = statSig;
+    if (r.turnsLeft !== undefined) boardLeft = r.turnsLeft;
 
     /*
-     * RECORDING THE RAIL UNDER THE RIGHT FACILITY.
+     * READ A FACILITY ONCE, CONFIRM IT, THEN LEAVE IT ALONE FOR THE TURN.
      *
-     * The first version wrote `board[voted] = r.support`, and that is two
-     * different clocks. `voted` is a five-frame majority, so it lags; the rail
-     * is whatever this frame shows, so it does not. Through a click from
-     * Stamina to Power the vote still says Stamina while the rail already shows
-     * Power's cards, and Power's board gets filed under Stamina. The player saw
-     * exactly that: a real board of 0/0/2/2/0 came out as 0/2/1/1/0, with the
-     * counts intact and shifted one facility back along the order he clicked.
+     * The first version wrote `board[voted] = r.support` on every frame, and
+     * that is two different clocks. `voted` is a five-frame majority, so it
+     * lags; the rail is whatever this frame shows, so it does not. Through a
+     * click from Stamina to Power the vote still said Stamina while the rail
+     * already showed Power's cards, and Power's board got filed under Stamina.
+     * A real board of 0/0/2/2/0 came out as 0/2/1/1/0 -- counts intact, shifted
+     * one facility back along the order the player clicked.
      *
-     * So two conditions now, and each one fixes a different half. The frame's
-     * OWN reading of the selected facility must agree with the settled vote --
-     * that puts both clocks on the same screen. And the rail must read the same
-     * on two consecutive frames -- the portraits animate in when a facility
-     * opens, so a frame caught mid-slide shows one card of two, which is how
-     * Guts's pair became a single card.
+     * Requiring the two clocks to agree fixed most of it and left the player
+     * with a board that "seemed correct when selected but changed to something
+     * else after selecting another stat", which is the same defect wearing a
+     * smaller hat: every frame is still a chance to overwrite a good reading
+     * with a transitional one.
+     *
+     * So the rule is his: confirm, then LOCK. A facility's rail has to read the
+     * same on three consecutive frames while the vote and this frame agree it
+     * is the one open -- that is roughly a second and a half of the screen
+     * holding still, which no animation does. Then it is written once and not
+     * touched again until the turn moves. Nothing that happens while he is
+     * looking at another facility can disturb it.
+     *
+     * The cost is that a locked misread stays locked, so the pane says which
+     * facilities are locked and offers to clear them. Trading a silent drift
+     * for a visible, correctable freeze is the same trade the reader makes
+     * everywhere else.
      */
     const railSig = r.support.map((z) => z.kind ?? "?").join(",");
-    const sameAsLast = voted === railFacility && railSig === railPending;
-    railFacility = voted; railPending = railSig;
+    const agreed = voted !== undefined && voted === r.selected && Object.keys(r.stats).length > 0;
+    if (!agreed) {
+      confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
+    } else if (voted === confirmFacility && railSig === confirmSig) {
+      confirmCount++;
+    } else {
+      confirmFacility = voted; confirmSig = railSig; confirmCount = 1;
+    }
 
-    if (voted && voted === r.selected && sameAsLast && Object.keys(r.stats).length > 0) {
+    if (agreed && confirmCount >= RAIL_CONFIRM_FRAMES && !lockedFacilities.has(voted)) {
       board[voted] = r.support;
+      lockedFacilities.add(voted);
     }
     renderBoard(voted);
     applyBtn.hidden = false;
@@ -431,7 +474,11 @@ export function mountCapture(
     const seen = STATS.filter((s2) => board[s2] !== undefined).length;
     const rows = STATS.map((s2) => {
       const slots = board[s2];
-      const here = s2 === open ? ' <span class="note">(open now)</span>' : "";
+      const here = s2 === open
+        ? lockedFacilities.has(s2)
+          ? ' <span class="note">(open · locked)</span>'
+          : ` <span class="note">(reading ${Math.min(confirmCount, RAIL_CONFIRM_FRAMES)}/${RAIL_CONFIRM_FRAMES})</span>`
+        : "";
       if (slots === undefined) {
         return `<div class="alt"><span>${s2}${here}</span><span class="note">not looked at</span><span></span></div>`;
       }
@@ -441,11 +488,13 @@ export function mountCapture(
         `<span>${kinds.length || ""}</span></div>`;
     }).join("");
     boardEl.innerHTML = `
-      <p class="note">Click through the five facilities and this fills in. The
-        cards on a facility are the largest single input to the advice, and the
-        game only shows them one facility at a time.</p>
+      <p class="note">Click through the five facilities and this fills in. A
+        facility is read once, confirmed over ${RAIL_CONFIRM_FRAMES} steady frames,
+        and then left alone for the rest of the turn — so looking at another
+        facility cannot disturb it.</p>
       ${rows}
-      <p class="note">${seen} of 5 seen this turn. Cleared when the turn moves.</p>`;
+      <p class="note">${seen} of 5 locked this turn. Cleared when the turn moves.</p>
+      <p><button class="go" id="cap-unlock">Read them all again</button></p>`;
   }
 
   /**
@@ -515,6 +564,16 @@ export function mountCapture(
     (document.activeElement as HTMLElement | null)?.blur();
     if (lastReading) { renderTurn(lastReading, true); onApply(lastReading, knownTurn, false, board); }
   };
+  // A locked misread would otherwise stand for the whole turn, so there is a
+  // way out that does not involve waiting for the turn to end.
+  boardEl.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).id !== "cap-unlock") return;
+    board = {};
+    lockedFacilities = new Set();
+    confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
+    renderBoard(undefined);
+  });
+
   turnEl.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".pick");
     if (b) setTurn(Number(b.dataset.turn));
