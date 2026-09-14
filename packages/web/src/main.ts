@@ -20,7 +20,8 @@ import type { GcRunState } from "../../engine/src/scenarios/grand-concert";
 import { loadDataset } from "./dataset";
 import { defaultSetup, makeScenario, editableFrom, applyEditable, type Editable } from "./run";
 import { imageFromFile, scanImage, applyScan, type ScanResult } from "./scan";
-import { mountCapture } from "./capture";
+import { mountCapture, type TurnBoard } from "./capture";
+import { assignPlacement, type ObservedKind } from "../../engine/src/placement";
 import { mountSetup, loadStored, saveStored, storedFrom, setupFrom, type StoredSetup, type SetupPane } from "./setup";
 import type { FrameReading } from "../../engine/src/vision/read";
 
@@ -185,20 +186,45 @@ function render(r: PlanResult, state: GcRunState, ms: number) {
 }
 
 /**
+ * How much of this turn's board the click-through log has seen.
+ *
+ * Shown on the advice pane rather than only on the capture pane, because the
+ * advice is what the player is reading when it matters: "computed from 2 of 5
+ * facilities" and "computed from all 5" are very different claims about the
+ * same recommendation, and the difference is entirely in his hands -- two more
+ * clicks fix it.
+ */
+function boardSummary(): string {
+  if (!lastBoard) return "";
+  const { seen, ambiguous, unmatched } = lastBoard;
+  const cls = seen === STATS.length ? "scanok" : "scanno";
+  const caveats = [
+    ambiguous ? `${ambiguous} card${ambiguous > 1 ? "s" : ""} could have been either of two of the same type` : "",
+    unmatched ? `${unmatched} badge${unmatched > 1 ? "s" : ""} matched no card in your deck` : "",
+  ].filter(Boolean);
+  return `<p class="${cls}"><strong>Board:</strong> ${seen} of ${STATS.length} facilities
+    seen this turn${seen < STATS.length ? " — click through the rest and this advice sharpens" : ""}.
+    ${caveats.length ? esc(caveats.join("; ")) + "." : ""}</p>`;
+}
+
+/**
  * What the scan found, and -- the part that matters -- what it did not.
  *
- * The reader reads 72% of fields and misreads none of them, so a scan is never
+ * The reader reads 77% of cross-validated fields and misreads one in 916, so a
+ * scan is never
  * "your state is now correct". Listing the refusals by name is what makes the
  * remaining 28% visible work rather than an invisible gap: a field that was
  * left alone looks exactly like a field that was confirmed unless something
  * says otherwise.
  */
 function scanSummary(): string {
-  if (!lastScan) return "";
+  if (!lastScan && !lastBoard) return "";
+  if (!lastScan) return boardSummary();
   if (!lastScan.ok) return `<p class="banner">${esc(lastScan.problem ?? "could not read that image")}</p>`;
   const lv = lastScan.facilityLevels ?? {};
   const levels = STATS.filter((s) => lv[s] !== undefined).map((s) => `${s} ${lv[s]}`);
   return `
+    ${boardSummary()}
     <p class="note">Read in ${lastScan.ms.toFixed(0)} ms.</p>
     <p class="scanok"><strong>Took from the frame:</strong> ${esc(lastScan.filled.join(", ") || "nothing")}</p>
     ${lastScan.refused.length ? `<p class="scanno"><strong>Could not read, so left alone:</strong>
@@ -272,6 +298,20 @@ function field(label: string, value: number, on: (v: number) => void, min = 0, m
   input.min = String(min); input.max = String(max);
   input.addEventListener("change", () => on(Number(input.value)));
   return [wrap, input] as const;
+}
+
+/**
+ * Redraw the editor, unless the player is inside it.
+ *
+ * The capture pane writes `placement` into `edit`, and a set of dropdowns that
+ * disagrees with what the planner is using is worse than no dropdowns. But a
+ * redraw while a field has focus is how the turn picker became unusable, so the
+ * rule is the same one: never while someone is in there.
+ */
+function syncEditor(): void {
+  const host = document.getElementById("editor");
+  if (!host || host.contains(document.activeElement)) return;
+  mountEditor();
 }
 
 function mountEditor() {
@@ -419,9 +459,40 @@ tabs.addEventListener("click", (e) => {
  * player typed. Facility levels are read but deliberately not applied -- they
  * belong to the run setup rather than to this turn.
  */
-function applyFromCapture(r: FrameReading, turn: number | null, focus: boolean): void {
+/** What the click-through log last said, so the advice pane can show it. */
+let lastBoard: { seen: number; ambiguous: number; unmatched: number } | null = null;
+
+function applyFromCapture(
+  r: FrameReading, turn: number | null, focus: boolean, board: TurnBoard,
+): void {
   edit = applyScan(edit, r);
   const readSomething = r.skillPts !== undefined || STATS.some((s) => r.stats[s] !== undefined);
+
+  /*
+   * THE CLICK-THROUGH LOG BECOMES THE PLACEMENT.
+   *
+   * This is the point of the whole capture pane. The player clicks through the
+   * five facilities before deciding -- he was doing that anyway -- and each
+   * screen shows which support cards are standing there. Collected, that is
+   * `placement`, which the engine was otherwise rolling dice for and which
+   * decides where rainbow is. Nothing here asks him to do anything he was not
+   * already doing.
+   */
+  const observed: Partial<Record<Stat, ObservedKind[]>> = {};
+  for (const s of STATS) {
+    const slots = board[s];
+    if (slots) observed[s] = slots.map((z) => z.kind ?? null);
+  }
+  if (Object.keys(observed).length > 0) {
+    const got = assignPlacement({ cards: setup.cards, observed, previous: edit.placement });
+    const moved = got.placement.some((x, i) => x !== edit.placement[i]);
+    edit.placement = got.placement;
+    lastBoard = { seen: got.seen.length, ambiguous: got.ambiguous, unmatched: got.unmatched.length };
+    // Keep the dropdowns honest about what the planner is actually using --
+    // but never redraw the editor out from under someone typing in it, which
+    // is the bug the turn picker had.
+    if (moved) syncEditor();
+  }
   // THE CAPS ARE NOT CONSTANT. They were treated as a per-run number read once
   // off Legacy Select until the cap row was read on all 58 captured training
   // frames: speed 1625 -> 1630 -> 1635, stamina 1332 -> 1336 -> 1342, power

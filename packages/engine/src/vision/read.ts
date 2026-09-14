@@ -12,6 +12,7 @@ import { readNumber } from "./segment";
 import { FIELDS, statField, capField, chipLevelField, fieldGlyphs, selectedFacility } from "./fields";
 import { GLYPH_TEMPLATES } from "./glyphs";
 import { probeScreen, type ScreenProbe } from "./classify";
+import { readSupportRail, type SupportSlot } from "./support";
 import { STATS, type Stat } from "../../../data/src/types";
 
 export interface FrameReading {
@@ -35,6 +36,15 @@ export interface FrameReading {
   /** Which facility's chip is raised, if exactly one could be identified. */
   selected?: Stat;
   /**
+   * The support cards standing on the SELECTED facility, read off the rail.
+   *
+   * One facility at a time, because that is all the game shows: the rail lists
+   * the cards on whichever facility is open. Building a whole turn's board
+   * means watching the player click through all five, which is what the capture
+   * pane's turn log does.
+   */
+  support: SupportSlot[];
+  /**
    * True when none of the unselected chips printed a level.
    *
    * This is summer camp, and it is the reason this flag exists rather than the
@@ -54,7 +64,10 @@ const EMPTY: Partial<Record<Stat, number>> = {};
 export function readFrame(panel: RgbaImage): FrameReading {
   const screen = probeScreen(panel);
   if (screen.kind !== "training") {
-    return { screen, stats: { ...EMPTY }, statCaps: { ...EMPTY }, facilityLevels: { ...EMPTY }, chipLevelsHidden: false };
+    return {
+      screen, stats: { ...EMPTY }, statCaps: { ...EMPTY }, facilityLevels: { ...EMPTY },
+      support: [], chipLevelsHidden: false,
+    };
   }
 
   const num = (spec: Parameters<typeof fieldGlyphs>[1]) =>
@@ -118,6 +131,7 @@ export function readFrame(panel: RgbaImage): FrameReading {
     stats,
     statCaps,
     facilityLevels,
+    support: readSupportRail(panel),
     ...(selected !== undefined ? { selected } : {}),
     chipLevelsHidden: Object.keys(facilityLevels).length === 0,
   };

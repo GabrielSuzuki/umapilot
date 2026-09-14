@@ -21,6 +21,7 @@ import { GrandConcertScenario, isCampTurn, ENERGY_MAX, REST_ENERGY_MEAN, type Gc
 import { competentPolicy, focusedPolicy, type Policy } from "../src/policy";
 import { EMPTY_TARGET, type RunTarget } from "../src/target";
 import { plan } from "../src/planner";
+import { assignPlacement } from "../src/placement";
 import {
   compileTarget, shortfallScore, meetsTarget, wilson, effectiveStat, HALVING_THRESHOLD,
   DEFAULT_TARGET_NORM, DEFAULT_TARGET_SCALE,
@@ -1623,6 +1624,66 @@ console.log("\nplanner: the advice follows the board");
       !!top && top.kind === "train" && top.facility !== "guts",
       `guts is null in the target; best training is ${top && top.kind === "train" ? top.facility : "none"}`);
   }
+}
+
+console.log("\nplanner: reading the board off the rail");
+{
+  const deck = [
+    { stat: "speed" as Stat, kind: "stat" }, { stat: "speed" as Stat, kind: "stat" },
+    { stat: "wit" as Stat, kind: "stat" }, { stat: "wit" as Stat, kind: "stat" },
+    { stat: null, kind: "friend" }, { stat: null, kind: "group" },
+  ];
+  const none: Array<Stat | null> = deck.map(() => null);
+
+  const all = assignPlacement({
+    cards: deck, previous: none,
+    observed: { speed: ["speed", "friend"], stamina: [], power: [], guts: ["wit"], wit: ["speed", "wit"] },
+  });
+  check("every badge lands on a card of its own type",
+    all.placement[0] === "speed" && all.placement[1] === "wit" &&
+    all.placement[2] === "guts" && all.placement[3] === "wit" &&
+    all.placement[4] === "speed" && all.unmatched.length === 0,
+    all.placement.join(","));
+  // Three, not two: the two Speed cards, the two Wit cards, AND the friend/group
+  // pair, which wear the same badge as each other. Counting by hand is what
+  // catches that -- the group card is easy to forget because it is the one card
+  // type whose badge does not name a stat.
+  check("every pick made from more than one candidate is counted",
+    all.ambiguous === 3, `${all.ambiguous} ambiguous picks`);
+
+  // The claim that matters most, because it is the one a partial log could get
+  // catastrophically wrong: looking at four facilities must not strip a card
+  // off the fifth.
+  const partial = assignPlacement({
+    cards: deck,
+    previous: ["speed", "wit", "guts", null, null, null],
+    observed: { speed: ["speed"] },
+  });
+  check("a card on a facility nobody has opened yet stays where it was",
+    partial.placement[1] === "wit" && partial.placement[2] === "guts",
+    partial.placement.join(","));
+  check("and a card missing from a facility we DID open is taken off it",
+    assignPlacement({
+      cards: deck, previous: ["wit", null, null, null, null, null],
+      observed: { wit: [] },
+    }).placement[0] === null);
+
+  // A badge the reader would not name matches nothing. Something is standing
+  // there and the honest answer is to say so, not to pick a card.
+  const unknown = assignPlacement({
+    cards: deck, previous: none, observed: { guts: [null] },
+  });
+  check("an unrecognised badge is reported, never assigned",
+    unknown.placement.every((x) => x === null) && unknown.unmatched.length === 1,
+    JSON.stringify(unknown.unmatched));
+
+  // More badges of a type than the deck holds means something is wrong with the
+  // reading, and the planner should not be handed a sixth Speed card.
+  const over = assignPlacement({
+    cards: deck, previous: none, observed: { speed: ["speed", "speed", "speed"] },
+  });
+  check("more badges than cards is reported rather than absorbed",
+    over.unmatched.length === 1 && over.placement.filter((x) => x === "speed").length === 2);
 }
 
 console.log(failures === 0 ? "\nplanner: all checks passed" : `\nplanner: ${failures} FAILED`);

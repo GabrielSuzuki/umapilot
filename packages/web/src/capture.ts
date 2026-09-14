@@ -19,6 +19,24 @@ import { cropImage } from "../../engine/src/vision/layout";
 import { readFrame, type FrameReading } from "../../engine/src/vision/read";
 import { meanLuma, lumaStdDev, type Box } from "../../engine/src/vision/image";
 import { turnCandidates, resolveTurn, calendarFor } from "../../engine/src/vision/turn";
+import type { SupportSlot } from "../../engine/src/vision/support";
+
+/**
+ * What the rail showed on each facility, this turn.
+ *
+ * THE CLICK-THROUGH LOG, and the reason the player asked for one before anybody
+ * knew what it was for. The game only ever shows the cards on the facility that
+ * is open, so a turn's real board is not on any single frame -- it is spread
+ * across the five screens the player already looks at while deciding. Watching
+ * him do it costs him nothing and collects the single largest input to the
+ * advice: `placement`, which the engine was otherwise rolling dice for.
+ *
+ * A facility not yet visited this turn is simply absent, which is different from
+ * a facility visited and found empty. The pane shows the difference, because
+ * "you have not looked at Wit yet" and "Wit has nobody on it" are different
+ * things to tell a planner.
+ */
+export type TurnBoard = Partial<Record<Stat, SupportSlot[]>>;
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
@@ -50,7 +68,12 @@ export function mountCapture(
    * for it by pressing the button -- an automatic sync must never yank them to
    * another tab while they are looking at the game.
    */
-  onApply: (reading: FrameReading, turn: number | null, focus: boolean) => void,
+  onApply: (
+    reading: FrameReading,
+    turn: number | null,
+    focus: boolean,
+    board: TurnBoard,
+  ) => void,
 ): CaptureHandle {
   const already = mounted.get(host);
   if (already) return already;
@@ -71,7 +94,10 @@ export function mountCapture(
     <div id="cap-status"></div>
     <div id="cap-turn"></div>
     <div class="cols">
-      <div><section class="card"><h2>What it reads</h2><div id="cap-read"></div></section></div>
+      <div>
+        <section class="card"><h2>This turn's board</h2><div id="cap-board"></div></section>
+        <section class="card"><h2>What it reads</h2><div id="cap-read"></div></section>
+      </div>
       <div><section class="card"><h2>The frame</h2><canvas id="cap-preview"></canvas></section></div>
     </div>`;
 
@@ -80,6 +106,7 @@ export function mountCapture(
   const applyBtn = host.querySelector<HTMLButtonElement>("#cap-apply")!;
   const statusEl = host.querySelector<HTMLElement>("#cap-status")!;
   const readEl = host.querySelector<HTMLElement>("#cap-read")!;
+  const boardEl = host.querySelector<HTMLElement>("#cap-board")!;
   const preview = host.querySelector<HTMLCanvasElement>("#cap-preview")!;
   const autoBox = host.querySelector<HTMLInputElement>("#cap-auto")!;
   const turnEl = host.querySelector<HTMLElement>("#cap-turn")!;
@@ -99,6 +126,12 @@ export function mountCapture(
   let timer: number | null = null;
   let frames = 0, panelsFound = 0, blackFrames = 0;
   let lastReading: FrameReading | null = null;
+  /** The click-through log for the turn in progress. */
+  let board: TurnBoard = {};
+  /** The turn the log belongs to, so a new turn starts a new log. */
+  let boardTurn: number | null = null;
+  /** Stats as of the last board reset -- a turn taken is a stat that moved. */
+  let boardStats = "";
 
   /**
    * The located panel, kept between frames.
@@ -187,6 +220,7 @@ export function mountCapture(
     frames = 0; panelsFound = 0; blackFrames = 0;
     locked = null; lockMisses = 0; recent.length = 0;
     knownTurn = null; pendingSig = ""; pendingCount = 0;
+    board = {}; boardTurn = null; boardStats = "";
     timer = window.setInterval(() => void tick(), 500);
   }
 
@@ -267,6 +301,29 @@ export function mountCapture(
     const r = readFrame(cropImage(img, box));
     lastReading = r;
     const voted = vote(r.selected);
+
+    /*
+     * WHEN A LOG BELONGS TO A NEW TURN.
+     *
+     * Two signals, because neither alone is enough. The career turn moves when
+     * the concert countdown says so, which is exact but only readable on some
+     * frames; the stats move when a training is taken, which is always visible
+     * but says nothing on a turn spent resting. Either one resets the log, and
+     * resetting it late is the failure that matters -- a board carried into the
+     * next turn is a board that is confidently wrong.
+     */
+    const statSig = STATS.map((s2) => r.stats[s2] ?? "-").join(",");
+    const turnMoved = knownTurn !== null && boardTurn !== null && knownTurn !== boardTurn;
+    const statsMoved = boardStats !== "" && statSig !== boardStats && !statSig.includes("-");
+    if (turnMoved || statsMoved) { board = {}; }
+    if (knownTurn !== null) boardTurn = knownTurn;
+    if (!statSig.includes("-")) boardStats = statSig;
+
+    // Only record a facility we are sure is open, and only from a frame that
+    // read something -- a rail read off a menu is noise with a facility name
+    // attached to it.
+    if (voted && Object.keys(r.stats).length > 0) board[voted] = r.support;
+    renderBoard(voted);
     applyBtn.hidden = false;
     for (const s2 of STATS) {
       const lv = r.facilityLevels[s2];
@@ -280,8 +337,17 @@ export function mountCapture(
     // frames: the stats only move when a turn is taken, so a material change is
     // rare, and rate-limiting it stops a flickering read from thrashing the
     // search.
+    // THE BOARD IS PART OF THE SIGNATURE, or the log never reaches the planner.
+    //
+    // Sync used to fire on a change in the stats, which move once a turn. The
+    // whole point of the click-through log is that it fills in WITHIN a turn,
+    // while the stats sit perfectly still -- so without this the board the
+    // player just showed us would wait until he had already trained.
+    const boardSig = STATS
+      .map((s2) => `${s2}:${(board[s2] ?? []).map((z) => z.kind ?? "?").join("")}`)
+      .join("/");
     const sig = STATS.map((s2) => r.stats[s2] ?? "-").join(",") + "|" + (r.skillPts ?? "-")
-      + "|" + (r.concertIn ?? "-");
+      + "|" + (r.concertIn ?? "-") + "|" + boardSig;
     if (sig === pendingSig) pendingCount++; else { pendingSig = sig; pendingCount = 1; }
 
     if (r.concertIn !== undefined) {
@@ -305,7 +371,7 @@ export function mountCapture(
       const now = performance.now();
       if (sig !== lastSyncSig && now - lastSyncAt > 3000) {
         lastSyncSig = sig; lastSyncAt = now;
-        onApply(r, knownTurn, false);
+        onApply(r, knownTurn, false, board);
       }
     }
 
@@ -328,6 +394,34 @@ export function mountCapture(
       r.chipLevelsHidden
         ? `<p class="note">No chip printed a level — this is what summer camp looks like.</p>` : "",
     ].join("");
+  }
+
+  /**
+   * The click-through log, drawn as the five facilities and who is on them.
+   *
+   * A facility not yet visited says so rather than showing an empty row,
+   * because "not looked at" and "nobody there" are different claims and only
+   * one of them should reach the planner.
+   */
+  function renderBoard(open: Stat | undefined): void {
+    const seen = STATS.filter((s2) => board[s2] !== undefined).length;
+    const rows = STATS.map((s2) => {
+      const slots = board[s2];
+      const here = s2 === open ? ' <span class="note">(open now)</span>' : "";
+      if (slots === undefined) {
+        return `<div class="alt"><span>${s2}${here}</span><span class="note">not looked at</span><span></span></div>`;
+      }
+      const kinds = slots.map((z) => z.kind ?? "?");
+      const text = kinds.length === 0 ? "nobody" : kinds.join(", ");
+      return `<div class="alt"><span>${s2}${here}</span><span>${esc(text)}</span>` +
+        `<span>${kinds.length || ""}</span></div>`;
+    }).join("");
+    boardEl.innerHTML = `
+      <p class="note">Click through the five facilities and this fills in. The
+        cards on a facility are the largest single input to the advice, and the
+        game only shows them one facility at a time.</p>
+      ${rows}
+      <p class="note">${seen} of 5 seen this turn. Cleared when the turn moves.</p>`;
   }
 
   /**
@@ -395,7 +489,7 @@ export function mountCapture(
   const setTurn = (t: number): void => {
     knownTurn = t;
     (document.activeElement as HTMLElement | null)?.blur();
-    if (lastReading) { renderTurn(lastReading, true); onApply(lastReading, knownTurn, false); }
+    if (lastReading) { renderTurn(lastReading, true); onApply(lastReading, knownTurn, false, board); }
   };
   turnEl.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".pick");
@@ -447,7 +541,9 @@ export function mountCapture(
   saveBtn.addEventListener("click", saveFrame);
   startBtn.addEventListener("click", () => void start());
   stopBtn.addEventListener("click", () => stop());
-  applyBtn.addEventListener("click", () => { if (lastReading) onApply(lastReading, knownTurn, true); });
+  applyBtn.addEventListener("click", () => {
+    if (lastReading) onApply(lastReading, knownTurn, true, board);
+  });
 
   const handle: CaptureHandle = { stop };
   mounted.set(host, handle);
