@@ -19,7 +19,7 @@ import { probeScreen, findPanel } from "../src/vision/classify";
 import { turnCandidates, resolveTurn, calendarFor, calendarTurn } from "../src/vision/turn";
 import { readFrame } from "../src/vision/read";
 import { scaleBox, statValueBox, REF_W, REF_H, STAT_CELL_X, isPanelShaped, cropImage } from "../src/vision/layout";
-import { chipLevelField, capField, fieldGlyphs } from "../src/vision/fields";
+import { chipLevelField, capField, statField, fieldGlyphs } from "../src/vision/fields";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -253,6 +253,32 @@ console.log("\nvision: finding the panel in a bigger capture");
     findPanel(solid(3840, 1080, 128, 128, 128)) === null,
     "the panel is located by the shape of the training screen, so a menu or a " +
     "race dialog has no good offset -- and the least-bad one is worse than none");
+}
+
+console.log("\nvision: the stat value box");
+{
+  // NO DROP RULE ON THE STAT FIELD, and this pins it because the rule looked
+  // reasonable and cost a digit. It discarded any component reaching within 3
+  // rows of the bottom of the value band, to remove the grade letter -- which
+  // `statDigitsInset` had already removed, on all 140 labelled values in the
+  // corpus. On the player's own frame the glyph "5" descends one row further
+  // than the other digits, so speed 135 read as 13 and guts 115 read as 11.
+  //
+  // The trade was backwards in principle too: an extra component makes
+  // `readNumber` refuse the whole field, because every glyph must match a digit
+  // template. A dropped component produces a plausible wrong number instead.
+  check("the stat value field discards nothing by position",
+    statField(0).segment?.dropIfReachesRow === undefined &&
+    statField(4).segment?.dropIfReachesRow === undefined,
+    "a rule that drops components trades a safe refusal for a silent misread");
+
+  // The same rule was also comparing a REFERENCE-pixel row against a mask
+  // measured in PANEL pixels, so on a window twice the reference size it would
+  // have discarded everything below the middle of the band. Any future
+  // positional rule has to be a fraction of the mask, not a constant.
+  check("and the value box is still inset past the grade letter",
+    statValueBox(0).x0 > STAT_CELL_X[0]![0],
+    `x0 ${statValueBox(0).x0} vs cell start ${STAT_CELL_X[0]![0]}`);
 }
 
 console.log("\nvision: the cap row");

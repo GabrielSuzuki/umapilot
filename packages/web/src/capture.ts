@@ -132,6 +132,9 @@ export function mountCapture(
   let boardTurn: number | null = null;
   /** Stats as of the last board reset -- a turn taken is a stat that moved. */
   let boardStats = "";
+  /** The previous frame's rail, so a mid-animation reading is never recorded. */
+  let railFacility: string | undefined;
+  let railPending = "";
 
   /**
    * The located panel, kept between frames.
@@ -220,7 +223,7 @@ export function mountCapture(
     frames = 0; panelsFound = 0; blackFrames = 0;
     locked = null; lockMisses = 0; recent.length = 0;
     knownTurn = null; pendingSig = ""; pendingCount = 0;
-    board = {}; boardTurn = null; boardStats = "";
+    board = {}; boardTurn = null; boardStats = ""; railFacility = undefined; railPending = "";
     timer = window.setInterval(() => void tick(), 500);
   }
 
@@ -319,10 +322,31 @@ export function mountCapture(
     if (knownTurn !== null) boardTurn = knownTurn;
     if (!statSig.includes("-")) boardStats = statSig;
 
-    // Only record a facility we are sure is open, and only from a frame that
-    // read something -- a rail read off a menu is noise with a facility name
-    // attached to it.
-    if (voted && Object.keys(r.stats).length > 0) board[voted] = r.support;
+    /*
+     * RECORDING THE RAIL UNDER THE RIGHT FACILITY.
+     *
+     * The first version wrote `board[voted] = r.support`, and that is two
+     * different clocks. `voted` is a five-frame majority, so it lags; the rail
+     * is whatever this frame shows, so it does not. Through a click from
+     * Stamina to Power the vote still says Stamina while the rail already shows
+     * Power's cards, and Power's board gets filed under Stamina. The player saw
+     * exactly that: a real board of 0/0/2/2/0 came out as 0/2/1/1/0, with the
+     * counts intact and shifted one facility back along the order he clicked.
+     *
+     * So two conditions now, and each one fixes a different half. The frame's
+     * OWN reading of the selected facility must agree with the settled vote --
+     * that puts both clocks on the same screen. And the rail must read the same
+     * on two consecutive frames -- the portraits animate in when a facility
+     * opens, so a frame caught mid-slide shows one card of two, which is how
+     * Guts's pair became a single card.
+     */
+    const railSig = r.support.map((z) => z.kind ?? "?").join(",");
+    const sameAsLast = voted === railFacility && railSig === railPending;
+    railFacility = voted; railPending = railSig;
+
+    if (voted && voted === r.selected && sameAsLast && Object.keys(r.stats).length > 0) {
+      board[voted] = r.support;
+    }
     renderBoard(voted);
     applyBtn.hidden = false;
     for (const s2 of STATS) {

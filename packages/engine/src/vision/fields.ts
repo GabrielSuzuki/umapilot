@@ -65,11 +65,34 @@ export function statField(i: number): FieldSpec {
     polarity: "dark",
     threshold: 60,
     style: "bigDark",
-    // The grade letter ("C+", "E") sits in the same cell, in the same colour,
-    // and is TALLER than the digits -- it runs down into the cap row. Dropping
-    // anything that reaches the bottom of the value band removes it without
-    // cropping by x, which would fail as soon as a stat reaches four digits.
-    segment: { dropIfReachesRow: LAYOUT.statValueBand.y1 - LAYOUT.statValueBand.y0 - 3 },
+    /*
+     * NO DROP RULE, AND THE REASON IS THE WORST BUG THIS READER HAS HAD.
+     *
+     * There used to be one: discard any component reaching within 3 rows of the
+     * bottom of the value band, on the theory that the grade letter ("C+", "E")
+     * sits in the same cell in the same colour and runs taller than the digits.
+     *
+     * It never once fired on the capture. Segmented without it, all 140
+     * labelled stat values across the corpus produce exactly as many components
+     * as they have digits -- the grade letter is already outside the box, cut
+     * off by `statDigitsInset`, and component bottoms only ever land on rows 18
+     * or 19 of a 23-row band. The guard protected nothing.
+     *
+     * On the player's own live frame it fired, and it deleted a digit. In his
+     * game's rendering the glyph "5" descends one row further than the others,
+     * to row 20 -- so speed 135 read as 13 and guts 115 read as 11. Plausible
+     * numbers, silently wrong, which is the single failure mode this whole
+     * module is built to avoid. It also compared a REFERENCE-pixel row against
+     * a PANEL-pixel mask, so on a larger window it would have discarded
+     * everything below the middle of the band.
+     *
+     * And the trade was backwards even in principle. An unexpected EXTRA
+     * component -- a grade letter that did get into the box -- cannot produce a
+     * wrong number: `readNumber` requires every glyph to match a digit template
+     * within the distance bar, so a letter makes the whole field refuse. A
+     * DROPPED component produces a wrong number that nothing downstream can
+     * detect. The rule swapped a safe failure for an unsafe one.
+     */
   };
 }
 
