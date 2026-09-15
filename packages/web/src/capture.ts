@@ -134,6 +134,10 @@ export function mountCapture(
   let boardStats = "";
   /** Turns-left as of the last board reset; it moves on every turn, rest included. */
   let boardLeft: number | null = null;
+  /** When the training screen went away, or null while it is up. */
+  let awaySince: number | null = null;
+  /** How long the screen must be gone before coming back counts as a new turn. */
+  const AWAY_IS_A_TURN_MS = 1500;
   /**
    * How many frames a facility's rail must hold still before it is believed.
    *
@@ -244,7 +248,7 @@ export function mountCapture(
     frames = 0; panelsFound = 0; blackFrames = 0;
     locked = null; lockMisses = 0; recent.length = 0;
     knownTurn = null; pendingSig = ""; pendingCount = 0;
-    board = {}; boardTurn = null; boardStats = ""; boardLeft = null;
+    board = {}; boardTurn = null; boardStats = ""; boardLeft = null; awaySince = null;
     lockedFacilities = new Set(); confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
     selectionFacility = undefined; selectionSince = 0;
     // 150 ms, not 500. The board lock needs several frames of a settled screen
@@ -325,11 +329,25 @@ export function mountCapture(
     if (!box) {
       readEl.innerHTML = `<p class="note">Waiting for a training screen.</p>`;
       applyBtn.hidden = true;
+      if (awaySince === null) awaySince = performance.now();
       return;
     }
 
     const r = readFrame(cropImage(img, box));
     lastReading = r;
+
+    // A panel-shaped thing that is not the training screen counts as being
+    // away, the same as no panel at all. `findPanel` succeeds on menus that
+    // happen to be the right shape, and the finale's race screens are among
+    // them -- without this the one phase that needs the away signal most would
+    // never trigger it.
+    if (r.screen.kind !== "training") {
+      if (awaySince === null) awaySince = performance.now();
+      readEl.innerHTML = `<p class="note">Not a training screen.</p>`;
+      applyBtn.hidden = true;
+      return;
+    }
+
     const voted = vote(r.selected);
 
     /*
@@ -352,7 +370,36 @@ export function mountCapture(
     // goal is met and the next one starts, which is also a turn boundary, so
     // any change at all resets the board.
     const leftMoved = boardLeft !== null && r.turnsLeft !== undefined && r.turnsLeft !== boardLeft;
-    if (turnMoved || statsMoved || leftMoved) {
+
+    /*
+     * AND A FOURTH, because the first three all stand still in the URA Finale.
+     *
+     * The player reported that "the locked stats did not unlock in the final 3
+     * URA Finale rounds", and every signal above explains why. The finale runs
+     * races rather than trainings, so the stats do not move. Its goal is one
+     * turn long each round, so `turnsLeft` reads 1 and stays there. And the
+     * concert pill reads FINISHED rather than a countdown, so the career turn
+     * cannot be resolved and `knownTurn` never advances. Three independent
+     * turn detectors, all of them derived from things that happen during a
+     * normal training turn, and a phase of the game where none of those things
+     * happen.
+     *
+     * LEAVING THE TRAINING SCREEN IS THE SIGNAL THEY WERE ALL PROXIES FOR.
+     * Whatever the player does with a turn -- train, rest, race, an outing, a
+     * finale round -- he leaves this screen to do it and comes back on the
+     * other side. That is true of every turn in every phase, which none of the
+     * other three are.
+     *
+     * A second and a half of absence, so that a frame lost to an animation or a
+     * dropped capture does not count as a turn. Clicking between facilities
+     * never leaves the training screen, so the click-through is unaffected;
+     * opening the lesson board and coming back does clear it, which costs five
+     * clicks and is the right way round.
+     */
+    const wasAway = awaySince !== null && performance.now() - awaySince >= AWAY_IS_A_TURN_MS;
+    awaySince = null;
+
+    if (turnMoved || statsMoved || leftMoved || wasAway) {
       board = {};
       lockedFacilities = new Set();
       confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
