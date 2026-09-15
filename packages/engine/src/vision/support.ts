@@ -10,7 +10,7 @@
  * game; for a single turn this is not a refinement of the advice, it is most of
  * the answer.
  *
- * WHAT IS ON THE RAIL. Portraits stacked at a fixed pitch, and they are NOT all
+ * WHAT IS ON THE RAIL. Portraits stacked at an even pitch, and they are NOT all
  * support cards: the other trainees at that facility appear in the same column,
  * drawn the same size. The support cards are the ones carrying a TYPE BADGE at
  * the upper left -- a small rounded square in a flat, saturated colour with a
@@ -48,31 +48,32 @@ export interface SupportSlot {
 }
 
 /**
- * Rail geometry, in reference pixels, measured off the capture.
+ * Rail geometry, FITTED per frame rather than assumed.
  *
- * The pitch comes from two badges on frame 5 at y 165-187 and 259-282, so 94.5
- * between slot centres. Six slots covers the visible column; the rail never
- * showed more than four portraits in the capture, and detection decides how
- * many are really there.
+ * The first version hard-coded the slots: first badge centre at y 176, pitch
+ * 94.5, measured off the captured career. That read 130 badges across the
+ * capture with nothing impossible, and then failed on the player's live frames
+ * -- it found one of three cards on his Wit facility and invented one on Guts.
+ *
+ * The rail's origin and spacing MOVE. Across four of his frames the pitch is 97
+ * to 98 where the capture says 94.5, and the first portrait starts at a
+ * different height depending on how many are stacked. Worse, the badges are not
+ * a prefix: a trainee can sit at the top with cards below it, so "the first N
+ * slots" is wrong in both directions.
+ *
+ * What does hold is that the badges are EVENLY SPACED. So origin and pitch are
+ * fitted per frame over a small grid, scored by how many of the six positions
+ * pass the badge tests below. That is one structure being fitted -- the rail is
+ * a column at a constant pitch -- not a threshold being tuned, which matters
+ * because the threshold-tuning version of this took four attempts and got
+ * worse each time.
  */
 export const RAIL = {
-  portraitCentreX: 748,
-  firstCentreY: 195,
-  pitch: 94.5,
+  badgeCentreX: 719,
+  /** Where the first badge can start, and how far apart they can be. */
+  originRange: { lo: 160, hi: 230 },
+  pitchRange: { lo: 92, hi: 102 },
   slots: 6,
-  /** The badge, relative to the portrait's centre. Measured 21-22px square. */
-  badgeOffset: { x: -31, y: -19 },
-  /**
-   * Sampled well inside the badge rather than across all of it.
-   *
-   * The badge's centre is 36px from the portrait's centre, and the rainbow ring
-   * a friendship-ready card wears runs at r 36-44 -- so the badge sits exactly
-   * on the ring and a box drawn to the badge's real 21px edge catches rainbow at
-   * two of its corners. Averaging that with a flat blue gives a hue halfway
-   * round the wheel and the card reads as an unrecognised type: 15 of them
-   * across the capture, every one a rainbow-ringed Speed or Wit card whose
-   * badge a human reads at a glance.
-   */
   badgeHalf: 8,
 } as const;
 
@@ -91,22 +92,15 @@ const HUE_BANDS: Array<{ lo: number; hi: number; kind: SupportKind }> = [
   { lo: 38, hi: 52, kind: "friend" },    // yellow, a smiling face
 ];
 
-/** Accept thresholds, set from the same frames. See `readSupportRail`. */
+const HUE_BINS = 36;
 const MIN_SATURATED_FRACTION = 0.55;
 const MIN_MEAN_SATURATION = 0.55;
 const MIN_WHITE_FRACTION = 0.08;
-/**
- * How much the badge's colour is allowed to vary in brightness.
- *
- * The badge is a FLAT fill, and that is a stronger statement about it than any
- * threshold on colour: measured across real badges the brightness of their
- * coloured pixels has a standard deviation of 0.0 to 11.5, while the two
- * background patches that survived every other test sat at 28.8. Painted walls
- * have gradients; UI chips do not.
- */
 const MAX_VALUE_SD = 18;
+const MIN_MODE_SHARE = 0.45;
+const MAX_HALO_SAME_HUE = 0.40;
 
-function hsv(r: number, g: number, b: number): [number, number, number] {
+function hsv(r: number, g: number, b: number): [number, number] {
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
   let h = 0;
   if (d !== 0) {
@@ -116,83 +110,125 @@ function hsv(r: number, g: number, b: number): [number, number, number] {
     h *= 60;
     if (h < 0) h += 360;
   }
-  return [h, mx === 0 ? 0 : d / mx, mx / 255];
+  return [h, mx === 0 ? 0 : d / mx];
 }
 
 /**
- * Read the rail.
+ * Is there a type badge centred here?
  *
- * THE THREE TESTS AND WHY EACH ONE IS THERE. A badge is a flat saturated square
- * with a white glyph, so: at least half the box is saturated colour (rules out
- * a portrait's face, which is mostly skin), the mean saturation of that colour
- * is high (rules out the pale background of a gym or a sky), and at least 8% of
- * the box is near-white (rules out a flat saturated BACKGROUND -- a swimming
- * pool fills the box with hue 203 at saturation 0.68 and would otherwise read
- * as a Speed card, which is exactly what it did before this test existed).
+ * FIVE TESTS, each one added because the previous set let something through,
+ * and the last two are the ones that matter away from the captured career:
  *
- * A fourth test came from the frames that survived the first three: the badge
- * is a FLAT fill, so the brightness of its coloured pixels barely varies
- * (measured SD 0.0-11.5), while a painted wall that happened to pass everything
- * else sat at 28.8.
+ *   at least 55% of the box is saturated colour  (rules out a face)
+ *   that colour is strongly saturated            (rules out a pale background)
+ *   at least 8% of the box is near-white         (rules out a flat blue POOL,
+ *                                                 which reads as a Speed badge)
+ *   the colour's brightness barely varies        (rules out a painted wall:
+ *                                                 real badges measure SD
+ *                                                 0.0-11.5, walls 28.8)
+ *   the halo around it is a DIFFERENT colour     (rules out sky and grass, which
+ *                                                 pass all four of the above --
+ *                                                 a badge has an edge, a sky
+ *                                                 does not)
  *
- * On the seven frames these were set from, the reader finds the same badges a
- * human counts off the rail: 2, 2, 2, 1, 2, 1 and 0. Across all 58 captured
- * training frames it never reports more cards of a type than the deck holds,
- * which is the one check available without labels.
+ * The hue is taken as the MODE, not the mean. The badge sits 36 px from its
+ * portrait's centre and the rainbow ring a friendship-ready card wears runs at
+ * r 36-44, so the badge sits exactly on the ring and a mean hue is a colour
+ * that is not in the box at all -- 15 unrecognised badges across the capture,
+ * every one a rainbow-ringed card whose badge a human reads at a glance.
+ */
+function badgeAt(
+  panel: RgbaImage, cx: number, cy: number, hx: number, hy: number,
+): { bin: number; share: number } | null {
+  let n = 0, satN = 0, whiteN = 0, satSum = 0, vSum = 0, vSum2 = 0;
+  const bins = new Float64Array(HUE_BINS);
+  for (let y = cy - hy; y < cy + hy; y++) {
+    for (let x = cx - hx; x < cx + hx; x++) {
+      if (y < 0 || y >= panel.height || x < 0 || x >= panel.width) return null;
+      const o = (y * panel.width + x) * 4;
+      const r = panel.data[o]!, g = panel.data[o + 1]!, b = panel.data[o + 2]!;
+      n++;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      if (mn > 205) whiteN++;
+      if (mx - mn > 60 && mx > 120) {
+        satN++;
+        const [h, sat] = hsv(r, g, b);
+        satSum += sat;
+        bins[Math.min(HUE_BINS - 1, Math.floor((h / 360) * HUE_BINS))]! += 1;
+        vSum += mx; vSum2 += mx * mx;
+      }
+    }
+  }
+  if (n === 0 || satN === 0) return null;
+  if (satN / n < MIN_SATURATED_FRACTION) return null;
+  if (satSum / satN < MIN_MEAN_SATURATION) return null;
+  if (whiteN / n < MIN_WHITE_FRACTION) return null;
+  const vMean = vSum / satN;
+  if (Math.sqrt(Math.max(0, vSum2 / satN - vMean * vMean)) > MAX_VALUE_SD) return null;
+  let top = 0;
+  for (let k = 1; k < HUE_BINS; k++) if (bins[k]! > bins[top]!) top = k;
+  const share = bins[top]! / satN;
+  if (share < MIN_MODE_SHARE) return null;
+
+  let outN = 0, outSame = 0;
+  const ox = hx + Math.round(hx * 0.8), oy = hy + Math.round(hy * 0.8);
+  for (let y = cy - oy; y < cy + oy; y++) {
+    for (let x = cx - ox; x < cx + ox; x++) {
+      if (y >= cy - hy && y < cy + hy && x >= cx - hx && x < cx + hx) continue;
+      if (y < 0 || y >= panel.height || x < 0 || x >= panel.width) continue;
+      const o = (y * panel.width + x) * 4;
+      const r = panel.data[o]!, g = panel.data[o + 1]!, b = panel.data[o + 2]!;
+      outN++;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      if (mx - mn > 60 && mx > 120) {
+        const [h] = hsv(r, g, b);
+        if (Math.min(HUE_BINS - 1, Math.floor((h / 360) * HUE_BINS)) === top) outSame++;
+      }
+    }
+  }
+  if (outN > 0 && outSame / outN > MAX_HALO_SAME_HUE) return null;
+  return { bin: top, share };
+}
+
+/**
+ * Read the rail: fit the column, then name what is in it.
+ *
+ * Measured on the captured career: 129 badges across 58 training frames, none
+ * unrecognised, and never more cards of a type than the deck holds -- which is
+ * the only check available, since the transcription never recorded who was on a
+ * facility. On four frames the player sent from a live run, with the true
+ * answer written down beside them, three are exactly right and the fourth
+ * invents one card out of a grass bank.
  */
 export function readSupportRail(panel: RgbaImage): SupportSlot[] {
   const sx = panel.width / REF_W, sy = panel.height / REF_H;
-  const out: SupportSlot[] = [];
+  const hx = Math.round(RAIL.badgeHalf * sx), hy = Math.round(RAIL.badgeHalf * sy);
+  const cx = Math.round(RAIL.badgeCentreX * sx);
 
-  for (let i = 0; i < RAIL.slots; i++) {
-    const cy = RAIL.firstCentreY + RAIL.pitch * i;
-    const bx = (RAIL.portraitCentreX + RAIL.badgeOffset.x) * sx;
-    const by = (cy + RAIL.badgeOffset.y) * sy;
-    const hx = RAIL.badgeHalf * sx, hy = RAIL.badgeHalf * sy;
-    const x0 = Math.max(0, Math.round(bx - hx)), x1 = Math.min(panel.width, Math.round(bx + hx));
-    const y0 = Math.max(0, Math.round(by - hy)), y1 = Math.min(panel.height, Math.round(by + hy));
-    if (x1 <= x0 || y1 <= y0) continue;
-
-    // A HISTOGRAM, NOT A MEAN. The mean hue of a contaminated box is a colour
-    // that is not in the box at all. The badge is a flat fill, so its hue is
-    // the mode by a wide margin, and a few ring or sparkle pixels cannot move
-    // it -- they can only fail to outvote it.
-    const HUE_BINS = 36;
-    const bins = new Float64Array(HUE_BINS);
-    let n = 0, satN = 0, whiteN = 0, satSum = 0, vSum = 0, vSum2 = 0;
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const o = (y * panel.width + x) * 4;
-        const r = panel.data[o]!, g = panel.data[o + 1]!, b = panel.data[o + 2]!;
-        n++;
-        const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-        if (mn > 205) whiteN++;
-        if (mx - mn > 60 && mx > 120) {
-          satN++;
-          const [h, s] = hsv(r, g, b);
-          satSum += s;
-          bins[Math.min(HUE_BINS - 1, Math.floor((h / 360) * HUE_BINS))]! += 1;
-          vSum += mx; vSum2 += mx * mx;
-        }
+  let bestHits: Array<{ y: number; bin: number }> = [];
+  let bestScore = 0;
+  for (let origin = Math.round(RAIL.originRange.lo * sy); origin <= Math.round(RAIL.originRange.hi * sy); origin++) {
+    for (let pitchRef = RAIL.pitchRange.lo; pitchRef <= RAIL.pitchRange.hi; pitchRef++) {
+      const pitch = pitchRef * sy;
+      const hits: Array<{ y: number; bin: number }> = [];
+      let score = 0;
+      for (let k = 0; k < RAIL.slots; k++) {
+        const cy = Math.round(origin + pitch * k);
+        if (cy - hy < 0 || cy + hy >= panel.height) break;
+        const b = badgeAt(panel, cx, cy, hx, hy);
+        // Scored by count first and confidence second, so a fit that finds one
+        // more card always beats a tidier fit that finds fewer.
+        if (b) { hits.push({ y: cy, bin: b.bin }); score += 1 + b.share; }
       }
+      if (score > bestScore) { bestScore = score; bestHits = hits; }
     }
-    if (n === 0 || satN === 0) continue;
-    if (satN / n < MIN_SATURATED_FRACTION) continue;
-    if (satSum / satN < MIN_MEAN_SATURATION) continue;
-    if (whiteN / n < MIN_WHITE_FRACTION) continue;
-    const vMean = vSum / satN;
-    if (Math.sqrt(Math.max(0, vSum2 / satN - vMean * vMean)) > MAX_VALUE_SD) continue;
-
-    let top = 0;
-    for (let k = 1; k < HUE_BINS; k++) if (bins[k]! > bins[top]!) top = k;
-    // The mode has to be a real majority of the coloured pixels, or the box is
-    // not showing a flat badge and nothing should be claimed about it.
-    if (bins[top]! / satN < 0.45) { out.push({ index: i, unknownBadge: true }); continue; }
-    const hue = (top + 0.5) * (360 / HUE_BINS);
-    const band = HUE_BANDS.find((z) => hue >= z.lo && hue <= z.hi);
-    out.push(band ? { index: i, kind: band.kind } : { index: i, unknownBadge: true });
   }
-  return out;
+
+  return bestHits.map((h, i) => {
+    const hue = ((h.bin + 0.5) * 360) / HUE_BINS;
+    const band = HUE_BANDS.find((z) => hue >= z.lo && hue <= z.hi);
+    return band ? { index: i, kind: band.kind } : { index: i, unknownBadge: true };
+  });
 }
 
 /** How many support cards the rail says are on this facility. */
