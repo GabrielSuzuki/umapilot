@@ -13,7 +13,7 @@ export const STATS = ["speed", "stamina", "power", "guts", "wit"] as const;
 export interface Task { field: string; spec: FieldSpec; value: number }
 
 /** Every labelled field on one frame, with where to find it. */
-export function tasksFor(label: Label): Task[] {
+export function tasksFor(label: Label, panel?: RgbaImage): Task[] {
   const out: Task[] = [];
   if (typeof label.turnsLeft === "number") out.push({ field: "turnsLeft", spec: FIELDS.turnsLeft, value: label.turnsLeft });
   if (typeof label.concertIn === "number") out.push({ field: "concertIn", spec: FIELDS.concertIn, value: label.concertIn });
@@ -82,7 +82,7 @@ export function harvestFrame(
   panel: RgbaImage, label: Label, acc: ReturnType<typeof newAccumulator>,
 ): { attempted: number; accepted: number } {
   let attempted = 0, accepted = 0;
-  for (const t of tasksFor(label)) {
+  for (const t of tasksFor(label, panel)) {
     attempted++;
     const text = String(t.value);
     const glyphs = fieldGlyphs(panel, t.spec);

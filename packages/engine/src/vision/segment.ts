@@ -40,6 +40,21 @@ export interface SegmentOptions {
    * into the grade's column.
    */
   dropIfReachesRow?: number;
+  /**
+   * Discard components shorter than this fraction of the tallest one found.
+   *
+   * Every digit in one number is the same height, so anything half-height is
+   * not a digit. What it usually is: the right-hand sliver of a grade letter
+   * that reached past the box inset. A "F+" grade leaves a 2x5 fragment inside
+   * the value box where the digits are 6x17 and up, and that fragment makes the
+   * whole field refuse -- the player's stamina and wit values went unread on
+   * every frame of his career for exactly this reason, while speed, power and
+   * guts (plain "F", no plus) read fine.
+   *
+   * Relative rather than absolute, because the mask is in PANEL pixels: a fixed
+   * threshold that works at 812 wide filters nothing at 1624.
+   */
+  minHeightFractionOfTallest?: number;
 }
 
 /** Split a mask into glyphs, left to right. */
@@ -76,6 +91,16 @@ export function segmentGlyphs(m: Mask, opts: SegmentOptions = {}): Glyph[] {
     if (bot < 0 || bot - top + 1 < minHeight) continue;
     if (opts.dropIfReachesRow !== undefined && bot >= opts.dropIfReachesRow) continue;
     out.push({ x0, y0: top, x1, y1: bot + 1, cells: normalise(m, x0, top, x1, bot + 1) });
+  }
+
+  // Relative height filter, applied after everything is found because it needs
+  // to know what the tallest component was.
+  const frac = opts.minHeightFractionOfTallest;
+  if (frac !== undefined && out.length > 1) {
+    let tallest = 0;
+    for (const g of out) tallest = Math.max(tallest, g.y1 - g.y0);
+    const floor = tallest * frac;
+    return out.filter((g) => g.y1 - g.y0 >= floor);
   }
   return out;
 }

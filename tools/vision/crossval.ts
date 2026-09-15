@@ -59,7 +59,7 @@ for (let fold = 0; fold < K; fold++) {
 
   for (const f of frames) {
     if (foldOf.get(f) !== fold) continue;            // test on this fold only
-    for (const task of tasksFor(labels.get(f)!)) {
+    for (const task of tasksFor(labels.get(f)!, panels.get(f)!)) {
       const fieldKey = task.field.startsWith("chip:") ? "chipLevel" : task.field.startsWith("cap:") ? "statCap" : task.field;
       const a = t(byField, fieldKey), b = t(byDigit, `${task.spec.style}:${task.value}`);
       a.n++; b.n++;

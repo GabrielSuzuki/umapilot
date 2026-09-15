@@ -9,7 +9,7 @@
  */
 import type { RgbaImage } from "./image";
 import { readNumber } from "./segment";
-import { FIELDS, statField, capField, chipLevelField, fieldGlyphs, selectedFacility } from "./fields";
+import { FIELDS, statField, capField, readChipLevel, fieldGlyphs, selectedFacility } from "./fields";
 import { GLYPH_TEMPLATES } from "./glyphs";
 import { probeScreen, type ScreenProbe } from "./classify";
 import { readSupportRail, type SupportSlot } from "./support";
@@ -115,7 +115,7 @@ export function readFrame(panel: RgbaImage): FrameReading {
   for (let i = 0; i < STATS.length; i++) {
     const stat = STATS[i]!;
     if (stat === selected) continue;
-    const level = num(chipLevelField(i, false));
+    const level = readChipLevel(panel, i);
     if (level !== undefined && level >= 1 && level <= 5) facilityLevels[stat] = level;
   }
 

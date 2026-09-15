@@ -142,6 +142,15 @@ export function mountCapture(
    * readings in a row is a screen that has settled.
    */
   const RAIL_CONFIRM_FRAMES = 3;
+  /**
+   * How long a facility must have been the open one before its rail is believed.
+   *
+   * The portraits animate in; the chevrons do not. Half a second is longer than
+   * the slide and shorter than anyone's click-to-click time.
+   */
+  const SELECTION_SETTLE_MS = 500;
+  let selectionFacility: Stat | undefined;
+  let selectionSince = 0;
   /** Facilities already read and frozen for this turn. */
   let lockedFacilities = new Set<Stat>();
   let confirmFacility: Stat | undefined;
@@ -237,7 +246,12 @@ export function mountCapture(
     knownTurn = null; pendingSig = ""; pendingCount = 0;
     board = {}; boardTurn = null; boardStats = ""; boardLeft = null;
     lockedFacilities = new Set(); confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
-    timer = window.setInterval(() => void tick(), 500);
+    selectionFacility = undefined; selectionSince = 0;
+    // 150 ms, not 500. The board lock needs several frames of a settled screen
+    // before it believes a facility, and at two frames a second that was over a
+    // second of holding still per facility -- slower than anyone clicks. The
+    // read itself costs about 3 ms, so the old rate was not buying anything.
+    timer = window.setInterval(() => void tick(), 150);
   }
 
   function stop(): void {
@@ -376,7 +390,26 @@ export function mountCapture(
      * for a visible, correctable freeze is the same trade the reader makes
      * everywhere else.
      */
+    /*
+     * THE RAIL LAGS THE CHEVRONS, WHICH IS THE OPPOSITE OF WHAT 0043 ASSUMED.
+     *
+     * The chevrons are redrawn under the new chip the instant a facility is
+     * clicked. The portraits slide in over a few hundred milliseconds. So for a
+     * moment the screen says "Stamina is open" while still showing Power's
+     * cards -- and since the OLD rail has been sitting still for many frames, a
+     * "three identical frames" test is satisfied immediately and locks the
+     * previous facility's cards under the new facility's name. That is what the
+     * player saw: a 1/2/0/1/1 board recorded as 1/1/0/1/0, with everything read
+     * as the same type.
+     *
+     * So stability of the rail is not enough; the screen has to have been on
+     * this facility for a while. `selectionSince` is the clock for that, and
+     * the two conditions together mean the rail has been the same for three
+     * frames AND the facility has been open for at least half a second.
+     */
     const railSig = r.support.map((z) => z.kind ?? "?").join(",");
+    if (voted !== selectionFacility) { selectionFacility = voted; selectionSince = performance.now(); }
+    const settled = performance.now() - selectionSince >= SELECTION_SETTLE_MS;
     const agreed = voted !== undefined && voted === r.selected && Object.keys(r.stats).length > 0;
     if (!agreed) {
       confirmFacility = undefined; confirmSig = ""; confirmCount = 0;
@@ -386,7 +419,7 @@ export function mountCapture(
       confirmFacility = voted; confirmSig = railSig; confirmCount = 1;
     }
 
-    if (agreed && confirmCount >= RAIL_CONFIRM_FRAMES && !lockedFacilities.has(voted)) {
+    if (agreed && settled && confirmCount >= RAIL_CONFIRM_FRAMES && !lockedFacilities.has(voted)) {
       board[voted] = r.support;
       lockedFacilities.add(voted);
     }

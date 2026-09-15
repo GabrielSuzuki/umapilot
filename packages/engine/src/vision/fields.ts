@@ -5,7 +5,8 @@
 import type { RgbaImage, Box } from "./image";
 import { inkMask, fractionOfMaxThreshold } from "./image";
 import type { RgbaImage as _Rgba } from "./image";
-import { segmentGlyphs, type Glyph, type SegmentOptions } from "./segment";
+import { segmentGlyphs, readNumber, type Glyph, type SegmentOptions } from "./segment";
+import { GLYPH_TEMPLATES } from "./glyphs";
 import {
   LAYOUT, REF_W, REF_H, scaleBox, statValueBox, chipLevelBox, statCapBox, type RefBox,
 } from "./layout";
@@ -32,6 +33,13 @@ export interface FieldSpec {
    * not fixed -- see `fractionOfMaxThreshold`.
    */
   thresholdFractionOfMax?: number;
+  /**
+   * A box already in PANEL pixels, used instead of scaling `box`.
+   *
+   * For the one field whose position cannot be derived from the panel's size --
+   * see `chipDiscBottom`.
+   */
+  panelBox?: Box;
   segment?: SegmentOptions;
   /**
    * Drop this many components off the LEFT before matching.
@@ -92,7 +100,18 @@ export function statField(i: number): FieldSpec {
      * within the distance bar, so a letter makes the whole field refuse. A
      * DROPPED component produces a wrong number that nothing downstream can
      * detect. The rule swapped a safe failure for an unsafe one.
+     *
+     * WHAT REPLACES IT is a rule about the glyphs rather than about the box:
+     * every digit in one number is the same height, so a component under half
+     * the tallest one is not a digit. That catches what the box inset misses --
+     * a "F+" grade whose plus sign reaches past the inset and leaves a 2x5
+     * fragment beside digits that are 6x17. The player's stamina and wit read
+     * as nothing on every frame because of that fragment, while speed, power
+     * and guts (plain "F", no plus) read fine. Relative, so it survives a
+     * window of any size, and it can only ever remove a component no digit
+     * template would have matched anyway.
      */
+    segment: { minHeightFractionOfTallest: 0.5 },
   };
 }
 
@@ -119,6 +138,7 @@ export function chipLevelField(i: number, selected: boolean): FieldSpec {
   const box = selected
     ? { x0: cx + 14, y0: 899, x1: cx + 48, y1: 930 }
     : { x0: cx + 10, y0: 941, x1: cx + 40, y1: 964 };
+
   return {
     box,
     polarity: "dark",
@@ -131,9 +151,54 @@ export function chipLevelField(i: number, selected: boolean): FieldSpec {
   };
 }
 
+/**
+ * A chip's level, read by sweeping the box a few rows up and down.
+ *
+ * WHY A SWEEP AND NOT A FIXED BOX. Every other field on this screen scales with
+ * the panel and lands where it should. The chip row does not reliably, because
+ * the player's window is not always the same crop: his capture came in at
+ * 812x1077 against a 812x1080 reference, and the missing three rows are at the
+ * TOP -- the chip discs end on the same absolute row in both. Three rows is
+ * enough to break this particular field, because the box is 23 rows tall with
+ * the facility's NAME directly above it, so a box three rows high catches the
+ * name and the field refuses. All five refused, and `readFrame` reports five
+ * refusals as `chipLevelsHidden`, which means summer camp. A three-pixel
+ * difference in how a window was captured told the planner it was July.
+ *
+ * WHY NOT ANCHOR TO THE CHIP ITSELF. That was tried: find the coloured disc and
+ * hang the box off its bottom edge. It reads the player's frame and it read 19%
+ * of the corpus, because "the lowest saturated block in the chip's column" is
+ * the swimming pool on some frames and the running track on others. Tightening
+ * the search window moved the failures around rather than removing them. The
+ * detector was being tuned to the corpus one threshold at a time, which is how
+ * you get a number that looks good and a reader that breaks on the next capture.
+ *
+ * The sweep makes no claim about where the chip is. It tries the scaled box and
+ * a few offsets around it, and accepts a value only when every offset that read
+ * anything agrees. A disagreement is a refusal, so the failure mode stays the
+ * safe one: two offsets reading 1 and 4 means the box is catching something
+ * else, and saying nothing is the right answer.
+ */
+export function readChipLevel(panel: RgbaImage, i: number): number | undefined {
+  const sy = panel.height / REF_H;
+  const spec = chipLevelField(i, false);
+  const base = scaleBox(spec.box, panel.width, panel.height);
+  const seen = new Set<number>();
+  for (const off of [0, -3, 3, -6, 6]) {
+    const dy = off * sy;
+    const box: Box = { x0: base.x0, y0: base.y0 + dy, x1: base.x1, y1: base.y1 + dy };
+    if (box.y0 < 0 || box.y1 > panel.height) continue;
+    const threshold = fractionOfMaxThreshold(panel, box, spec.thresholdFractionOfMax ?? 0.92);
+    const glyphs = segmentGlyphs(inkMask(panel, box, spec.polarity, threshold), spec.segment ?? {});
+    const got = readNumber(glyphs, GLYPH_TEMPLATES.get(spec.style) ?? []);
+    if (got && got.value >= 1 && got.value <= 5) seen.add(got.value);
+  }
+  return seen.size === 1 ? [...seen][0] : undefined;
+}
+
 /** Cut a field out of a panel and return its glyphs, left to right. */
 export function fieldGlyphs(panel: RgbaImage, spec: FieldSpec): Glyph[] {
-  const box: Box = scaleBox(spec.box, panel.width, panel.height);
+  const box: Box = spec.panelBox ?? scaleBox(spec.box, panel.width, panel.height);
   const threshold = spec.thresholdFractionOfMax !== undefined
     ? fractionOfMaxThreshold(panel, box, spec.thresholdFractionOfMax)
     : spec.threshold;
